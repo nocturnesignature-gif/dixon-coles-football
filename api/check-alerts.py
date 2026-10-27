@@ -12,13 +12,22 @@ ALERT_EDGE = 0.15
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "PF-7f3k9-valeur")
 
 
+class SupabaseError(Exception):
+    def __init__(self, status, url, body):
+        super().__init__(f"Supabase HTTP {status}")
+        self.status = status
+        self.url = url
+        self.body = body
+
+
 def supabase_request(path, method="GET", payload=None):
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not base_url or not service_key:
         raise RuntimeError("missing_supabase_config")
+    url = f"{base_url}/rest/v1/{path}"
     request = urllib.request.Request(
-        f"{base_url}/rest/v1/{path}",
+        url,
         method=method,
         headers={
             "apikey": service_key,
@@ -28,15 +37,19 @@ def supabase_request(path, method="GET", payload=None):
         },
         data=json.dumps(payload).encode() if payload is not None else None,
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:500]
+        raise SupabaseError(exc.code, url, body) from exc
 
 
 def optional_supabase_request(path, method="GET", payload=None):
     try:
         return supabase_request(path, method=method, payload=payload), True
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
+    except SupabaseError as exc:
+        if exc.status == 404:
             return [], False
         raise
 
@@ -160,7 +173,7 @@ def check_alerts():
                         "suggested_stake_fraction": alert["suggested_stake_fraction"],
                         "notified_at": datetime.now(timezone.utc).isoformat(),
                     }])
-                except urllib.error.HTTPError:
+                except SupabaseError:
                     persistence_errors += 1
             sent += 1
         return jsonify({
@@ -171,6 +184,13 @@ def check_alerts():
             "alerts_table_available": alerts_table_available,
             "persistence_errors": persistence_errors,
         })
+    except SupabaseError as exc:
+        return jsonify({
+            "ok": False,
+            "error": f"supabase_http_{exc.status}",
+            "url": exc.url,
+            "details": exc.body,
+        }), 502
     except urllib.error.HTTPError as exc:
         return jsonify({"ok": False, "error": f"upstream_http_{exc.code}"}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
