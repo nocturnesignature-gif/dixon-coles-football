@@ -32,6 +32,15 @@ def supabase_request(path, method="GET", payload=None):
         return json.load(response)
 
 
+def optional_supabase_request(path, method="GET", payload=None):
+    try:
+        return supabase_request(path, method=method, payload=payload), True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return [], False
+        raise
+
+
 def send_ntfy(message, title, priority="default", tags=None):
     payload = {
         "topic": NTFY_TOPIC,
@@ -82,9 +91,12 @@ def check_alerts():
         latest_odds = {}
         for row in odds:
             latest_odds.setdefault((row["event_id"], row["market"]), row)
-        existing = supabase_request("bet_alerts?select=event_id,market&order=created_at.desc&limit=1000")
+        existing, alerts_table_available = optional_supabase_request(
+            "bet_alerts?select=event_id,market&order=created_at.desc&limit=1000"
+        )
         already_alerted = {(row["event_id"], row["market"]) for row in existing}
         alerts = []
+        seen_in_run = set()
         for forecast in forecasts:
             event_id = forecast.get("external_id")
             probabilities = {
@@ -105,8 +117,9 @@ def check_alerts():
                 if expected_value < ALERT_EDGE:
                     continue
                 key = (event_id, market)
-                if key in already_alerted:
+                if key in already_alerted or key in seen_in_run:
                     continue
+                seen_in_run.add(key)
                 alerts.append({
                     "event_id": event_id,
                     "market": market,
@@ -121,6 +134,7 @@ def check_alerts():
                 })
         alerts.sort(key=lambda x: x["expected_value"], reverse=True)
         sent = 0
+        persistence_errors = 0
         for alert in alerts:
             message = (
                 f"{alert['home_team']} — {alert['away_team']}\n"
@@ -131,21 +145,32 @@ def check_alerts():
             )
             priority = "high" if alert["expected_value"] >= 0.25 else "default"
             send_ntfy(message, "Très bon pari détecté", priority=priority, tags=["soccer", "moneybag"])
-            supabase_request("bet_alerts", method="POST", payload=[{
-                "event_id": alert["event_id"],
-                "market": alert["market"],
-                "competition": alert["competition"],
-                "home_team": alert["home_team"],
-                "away_team": alert["away_team"],
-                "outcome": alert["outcome"],
-                "model_probability": alert["model_probability"],
-                "odds": alert["odds"],
-                "expected_value": alert["expected_value"],
-                "suggested_stake_fraction": alert["suggested_stake_fraction"],
-                "notified_at": datetime.now(timezone.utc).isoformat(),
-            }])
+            if alerts_table_available:
+                try:
+                    supabase_request("bet_alerts", method="POST", payload=[{
+                        "event_id": alert["event_id"],
+                        "market": alert["market"],
+                        "competition": alert["competition"],
+                        "home_team": alert["home_team"],
+                        "away_team": alert["away_team"],
+                        "outcome": alert["outcome"],
+                        "model_probability": alert["model_probability"],
+                        "odds": alert["odds"],
+                        "expected_value": alert["expected_value"],
+                        "suggested_stake_fraction": alert["suggested_stake_fraction"],
+                        "notified_at": datetime.now(timezone.utc).isoformat(),
+                    }])
+                except urllib.error.HTTPError:
+                    persistence_errors += 1
             sent += 1
-        return jsonify({"ok": True, "alerts_found": len(alerts), "alerts_sent": sent, "topic": NTFY_TOPIC})
+        return jsonify({
+            "ok": True,
+            "alerts_found": len(alerts),
+            "alerts_sent": sent,
+            "topic": NTFY_TOPIC,
+            "alerts_table_available": alerts_table_available,
+            "persistence_errors": persistence_errors,
+        })
     except urllib.error.HTTPError as exc:
         return jsonify({"ok": False, "error": f"upstream_http_{exc.code}"}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
