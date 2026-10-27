@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 ALERT_EDGE = 0.15
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "PF")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "PF-7f3k9-valeur")
 
 
 def supabase_request(path, method="GET", payload=None):
