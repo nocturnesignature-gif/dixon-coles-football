@@ -69,15 +69,31 @@ def sync_odds():
     debug = request.args.get("debug") == "true"
     try:
         now = datetime.now(timezone.utc)
-        events = supabase_request(
-            "football_events_v4?select=id,external_id,sport_key,competition,home_team,away_team,kickoff_at"
-            "&source=eq.football_data_org&active=eq.true"
-            f"&kickoff_at=gt.{urllib.parse.quote(now.isoformat())}"
-            f"&kickoff_at=lt.{urllib.parse.quote((now+timedelta(days=7)).isoformat())}"
+        horizon = now + timedelta(days=7)
+        all_events = supabase_request(
+            "football_events_v4?select=id,external_id,source,active,competition,home_team,away_team,kickoff_at&order=kickoff_at.asc&limit=1000"
         )
+        source_events = [e for e in all_events if e.get("source") == "football_data_org"]
+        active_events = [e for e in source_events if e.get("active") is True]
+        future_events = [e for e in active_events if datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) > now]
+        events = [e for e in future_events if datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) < horizon]
+        if debug:
+            return jsonify({
+                "ok": True,
+                "counts": {
+                    "all": len(all_events),
+                    "source": len(source_events),
+                    "active": len(active_events),
+                    "future": len(future_events),
+                    "next_7_days": len(events),
+                },
+                "sample_events": [
+                    {k: e.get(k) for k in ("source", "active", "competition", "home_team", "away_team", "kickoff_at")}
+                    for e in all_events[:5]
+                ],
+            })
         saved = 0
         matched = 0
-        diagnostics = []
         for event in events:
             sport_key = SPORT_KEYS.get(event["competition"])
             if not sport_key:
@@ -91,18 +107,10 @@ def sync_odds():
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds?{params}"
             with urllib.request.urlopen(url, timeout=20) as response:
                 odds_events = json.load(response)
-            if debug and len(diagnostics) < 8:
-                diagnostics.append({
-                    "competition": event["competition"],
-                    "our_event": {"home": event["home_team"], "away": event["away_team"], "kickoff": event["kickoff_at"]},
-                    "odds_samples": [{"home": o.get("home_team"), "away": o.get("away_team"), "kickoff": o.get("commence_time")} for o in odds_events[:3]],
-                })
             match = next((o for o in odds_events if same_match(event, o)), None)
             if not match:
                 continue
             matched += 1
-            if debug:
-                continue
             bookmaker = next(iter(match.get("bookmakers", [])), None)
             if not bookmaker:
                 continue
@@ -125,8 +133,6 @@ def sync_odds():
             if rows:
                 supabase_request("live_odds", method="POST", payload=rows)
                 saved += len(rows)
-        if debug:
-            return jsonify({"ok": True, "diagnostics": diagnostics})
         return jsonify({"ok": True, "events_processed": len(events), "events_matched": matched, "odds_saved": saved})
     except urllib.error.HTTPError as exc:
         return jsonify({"ok": False, "error": f"odds_api_http_{exc.code}"}), 502
