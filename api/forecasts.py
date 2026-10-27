@@ -10,6 +10,13 @@ app = Flask(__name__)
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 RESULTS_VIEW = "football_model_prospective_results_v4"
 MIN_EDGE = 0.03
+MIN_ODDS = 1.45
+MAX_ODDS = 3.80
+MIN_SINGLE_PROBABILITY = 0.55
+MIN_DOUBLE_CHANCE_PROBABILITY = 0.65
+MIN_COMBO_PROBABILITY = 0.25
+MIN_COMBO_EDGE = 0.05
+MAX_COMBO_ODDS = 8.00
 MAX_COMBO_LEGS = 3
 MAX_COMBOS = 10
 
@@ -38,6 +45,14 @@ def kelly_fraction(expected_value, odds):
     if odds <= 1 or expected_value <= 0:
         return 0
     return min(0.02, 0.25 * expected_value / (odds - 1))
+
+
+def confidence(probability):
+    if probability >= 0.65:
+        return "Élevée"
+    if probability >= 0.55:
+        return "Moyenne"
+    return "Faible"
 
 
 @app.get("/api/forecasts")
@@ -86,28 +101,32 @@ def forecasts():
                     continue
                 probability = probabilities[market]
                 expected_value = probability * odd["odds"] - 1
-                if expected_value >= MIN_EDGE:
-                    bets.append({
-                        "event_id": event_id,
-                        "competition": forecast["competition"],
-                        "home_team": forecast["home_team"],
-                        "away_team": forecast["away_team"],
-                        "kickoff_at": forecast["kickoff_at"],
-                        "market": market,
-                        "outcome": outcome,
-                        "model_probability": probability,
-                        "odds": odd["odds"],
-                        "implied_probability": 1 / odd["odds"],
-                        "expected_value": expected_value,
-                        "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
-                        "provider": odd["provider"],
-                        "captured_at": odd["captured_at"],
-                    })
+                if not (MIN_EDGE <= expected_value and MIN_ODDS <= odd["odds"] <= MAX_ODDS and probability >= MIN_SINGLE_PROBABILITY):
+                    continue
+                bets.append({
+                    "event_id": event_id,
+                    "competition": forecast["competition"],
+                    "home_team": forecast["home_team"],
+                    "away_team": forecast["away_team"],
+                    "kickoff_at": forecast["kickoff_at"],
+                    "market": market,
+                    "outcome": outcome,
+                    "model_probability": probability,
+                    "odds": odd["odds"],
+                    "implied_probability": 1 / odd["odds"],
+                    "expected_value": expected_value,
+                    "confidence": confidence(probability),
+                    "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
+                    "provider": odd["provider"],
+                    "captured_at": odd["captured_at"],
+                })
             for market, outcome, probability in (
                 ("1X", "Domicile ou nul", probabilities["home"] + probabilities["draw"]),
                 ("12", "Domicile ou extérieur", probabilities["home"] + probabilities["away"]),
                 ("X2", "Nul ou extérieur", probabilities["draw"] + probabilities["away"]),
             ):
+                if probability < MIN_DOUBLE_CHANCE_PROBABILITY:
+                    continue
                 double_chance.append({
                     "event_id": event_id,
                     "competition": forecast["competition"],
@@ -117,9 +136,10 @@ def forecasts():
                     "market": market,
                     "outcome": outcome,
                     "model_probability": probability,
+                    "confidence": confidence(probability),
                     "minimum_odds": round(1 / probability, 3) if probability > 0 else None,
                 })
-        bets.sort(key=lambda x: x["expected_value"], reverse=True)
+        bets.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
         double_chance.sort(key=lambda x: x["model_probability"], reverse=True)
         combos = []
         eligible = [bet for bet in bets if bet["expected_value"] > 0]
@@ -135,7 +155,7 @@ def forecasts():
                     probability *= bet["model_probability"]
                     combined_odds *= bet["odds"]
                 expected_value = probability * combined_odds - 1
-                if expected_value < MIN_EDGE:
+                if probability < MIN_COMBO_PROBABILITY or combined_odds > MAX_COMBO_ODDS or expected_value < MIN_COMBO_EDGE:
                     continue
                 combos.append({
                     "legs": [
@@ -151,9 +171,10 @@ def forecasts():
                     "combined_odds": combined_odds,
                     "model_probability": probability,
                     "expected_value": expected_value,
+                    "confidence": confidence(probability),
                     "suggested_stake_fraction": kelly_fraction(expected_value, combined_odds),
                 })
-        combos.sort(key=lambda x: x["expected_value"], reverse=True)
+        combos.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
         combos = combos[:MAX_COMBOS]
         leagues = []
         for competition in LEAGUES:
@@ -173,6 +194,15 @@ def forecasts():
         return jsonify({
             "ok": True,
             "status": "experimental_unvalidated",
+            "filters": {
+                "minimum_odds": MIN_ODDS,
+                "maximum_odds": MAX_ODDS,
+                "minimum_single_probability": MIN_SINGLE_PROBABILITY,
+                "minimum_double_chance_probability": MIN_DOUBLE_CHANCE_PROBABILITY,
+                "minimum_combo_probability": MIN_COMBO_PROBABILITY,
+                "maximum_combo_odds": MAX_COMBO_ODDS,
+                "minimum_combo_expected_value": MIN_COMBO_EDGE,
+            },
             "leagues": leagues,
             "bets": bets,
             "double_chance": double_chance,
