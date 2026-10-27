@@ -14,6 +14,7 @@ MIN_ODDS = 1.45
 MAX_ODDS = 3.80
 MIN_SINGLE_PROBABILITY = 0.55
 MIN_DOUBLE_CHANCE_PROBABILITY = 0.65
+MIN_DOUBLE_CHANCE_EDGE = 0.03
 MIN_COMBO_PROBABILITY = 0.25
 MIN_COMBO_EDGE = 0.05
 MAX_COMBO_ODDS = 8.00
@@ -82,7 +83,7 @@ def forecasts():
             latest_odds.setdefault(key, row)
         by_version = {}
         bets = []
-        double_chance = []
+        double_chance_by_event = {}
         for forecast in forecasts:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
             event_id = forecast.get("external_id")
@@ -120,14 +121,20 @@ def forecasts():
                     "provider": odd["provider"],
                     "captured_at": odd["captured_at"],
                 })
-            for market, outcome, probability in (
-                ("1X", "Domicile ou nul", probabilities["home"] + probabilities["draw"]),
-                ("12", "Domicile ou extérieur", probabilities["home"] + probabilities["away"]),
-                ("X2", "Nul ou extérieur", probabilities["draw"] + probabilities["away"]),
-            ):
-                if probability < MIN_DOUBLE_CHANCE_PROBABILITY:
+            dc_probabilities = {
+                "1X": ("Domicile ou nul", probabilities["home"] + probabilities["draw"]),
+                "12": ("Domicile ou extérieur", probabilities["home"] + probabilities["away"]),
+                "X2": ("Nul ou extérieur", probabilities["draw"] + probabilities["away"]),
+            }
+            best_dc = None
+            for market, (outcome, probability) in dc_probabilities.items():
+                odd = latest_odds.get((event_id, market))
+                if not odd:
                     continue
-                double_chance.append({
+                expected_value = probability * odd["odds"] - 1
+                if probability < MIN_DOUBLE_CHANCE_PROBABILITY or expected_value < MIN_DOUBLE_CHANCE_EDGE:
+                    continue
+                candidate = {
                     "event_id": event_id,
                     "competition": forecast["competition"],
                     "home_team": forecast["home_team"],
@@ -136,11 +143,20 @@ def forecasts():
                     "market": market,
                     "outcome": outcome,
                     "model_probability": probability,
+                    "odds": odd["odds"],
+                    "implied_probability": 1 / odd["odds"],
+                    "expected_value": expected_value,
                     "confidence": confidence(probability),
-                    "minimum_odds": round(1 / probability, 3) if probability > 0 else None,
-                })
+                    "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
+                    "provider": odd["provider"],
+                    "captured_at": odd["captured_at"],
+                }
+                if best_dc is None or candidate["expected_value"] > best_dc["expected_value"]:
+                    best_dc = candidate
+            if best_dc:
+                double_chance_by_event[event_id] = best_dc
+        double_chance = sorted(double_chance_by_event.values(), key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
         bets.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
-        double_chance.sort(key=lambda x: x["model_probability"], reverse=True)
         combos = []
         eligible = [bet for bet in bets if bet["expected_value"] > 0]
         for size in (2, 3):
@@ -199,6 +215,7 @@ def forecasts():
                 "maximum_odds": MAX_ODDS,
                 "minimum_single_probability": MIN_SINGLE_PROBABILITY,
                 "minimum_double_chance_probability": MIN_DOUBLE_CHANCE_PROBABILITY,
+                "minimum_double_chance_expected_value": MIN_DOUBLE_CHANCE_EDGE,
                 "minimum_combo_probability": MIN_COMBO_PROBABILITY,
                 "maximum_combo_odds": MAX_COMBO_ODDS,
                 "minimum_combo_expected_value": MIN_COMBO_EDGE,
