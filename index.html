@@ -36,9 +36,9 @@ input{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8p
 </div>
 <h2>À miser — tous championnats confondus</h2>
 <p class="muted">
-  Les paris simples, double chance et combinés sont sélectionnés dans les cinq championnats suivis : Ligue 1, Premier League, LaLiga, Bundesliga et Serie A.
-  Les combinés peuvent donc mélanger des matchs de championnats différents.
-  Critères : cote entre 1.45 et 3.80, probabilité modèle d’au moins 55 %, valeur attendue d’au moins 3 % ; combinés d’au moins 25 % de probabilité, cote maximale 8.00 et EV d’au moins 5 %.
+  Les paris sont sélectionnés dans les cinq championnats suivis. Les cotes affichées sont les cotes réelles récupérées des bookmakers.
+  Paris simples : cote 1.45–3.80, probabilité ≥ 55 %, EV ≥ 3 %. Double chance : probabilité ≥ 65 % et EV ≥ 3 %, avec une seule meilleure option par match.
+  Combinés : 2-3 sélections indépendantes, probabilité ≥ 25 %, cote ≤ 8.00 et EV ≥ 5 %.
 </p>
 <h3>Paris simples</h3>
 <div id="bets">Chargement…</div>
@@ -64,6 +64,7 @@ document.getElementById('bankroll').addEventListener('input', event => {
   bankroll = Math.max(0, Number(event.target.value) || 0);
   localStorage.setItem('bankroll', bankroll);
   renderBets(window.currentBets || []);
+  renderDoubleChance(window.currentDoubleChance || []);
   renderCombos(window.currentCombos || []);
 });
 const euro = fraction => {
@@ -86,10 +87,11 @@ function renderBets(bets) {
     '<p>Aucun pari simple ne passe actuellement les critères de qualité.</p>';
 }
 function renderDoubleChance(rows) {
+  window.currentDoubleChance = rows;
   document.getElementById('doubleChance').innerHTML = rows.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Probabilité modèle</th><th>Confiance</th><th>Cote minimale rentable</th></tr>` +
-    rows.slice(0, 20).map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${odds(r.minimum_odds)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucune double chance n’atteint actuellement le seuil de 65 % de probabilité modèle.</p>';
+    `<table><tr><th>Championnat</th><th>Match</th><th>Double chance</th><th>Probabilité modèle</th><th>Cote réelle</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
+    rows.map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td>${odds(r.odds)}</td><td class="positive">+${(r.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${euro(r.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucune double chance ne passe actuellement les critères : probabilité modèle d’au moins 65 % et valeur attendue d’au moins 3 %.</p>';
 }
 function renderCombos(combos) {
   window.currentCombos = combos;
