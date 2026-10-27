@@ -20,6 +20,8 @@ th{background:#334155}
 .medium{color:#fde68a;font-weight:700}
 .low{color:#fca5a5;font-weight:700}
 .muted{color:#94a3b8;font-size:14px}
+.bankroll{display:flex;align-items:center;gap:10px;margin:16px 0;background:#1e293b;padding:12px;border-radius:12px}
+input{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 10px;width:140px}
 </style>
 </head>
 <body>
@@ -27,14 +29,18 @@ th{background:#334155}
 <h1>Suivi prospectif — Football européen</h1>
 <p><span class="badge">Expérimental — non validé</span></p>
 <p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle. Aucun gain n’est garanti.</p>
+<div class="bankroll">
+  <label for="bankroll"><strong>Cagnotte (€)</strong></label>
+  <input id="bankroll" type="number" min="0" step="1" placeholder="100">
+  <span class="muted">Sauvegardée uniquement dans ce navigateur.</span>
+</div>
 <div class="tabs" id="tabs"></div>
 <h2>Prédictions avant-match</h2>
 <div id="forecasts">Chargement…</div>
 <h2>À miser</h2>
 <p class="muted">
-  Critères de qualité : cote entre 1.45 et 3.80, probabilité modèle d’au moins 55 % et valeur attendue d’au moins 3 %.
-  Les cotes très faibles, comme 1.01, sont exclues car elles offrent un gain insuffisant pour le risque pris.
-  La mise indicative utilise une fraction de Kelly prudente, plafonnée à 2 % de bankroll.
+  Critères : cote entre 1.45 et 3.80, probabilité modèle d’au moins 55 % et valeur attendue d’au moins 3 %.
+  Les cotes très faibles, comme 1.01, sont exclues. La mise en euros utilise une fraction de Kelly prudente, plafonnée à 2 % de la cagnotte.
 </p>
 <h3>Paris simples</h3>
 <div id="bets">Chargement…</div>
@@ -50,11 +56,22 @@ th{background:#334155}
 <script>
 const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
 const odds = v => v == null ? '—' : Number(v).toFixed(2);
-const stake = v => v == null || v <= 0 ? '—' : (v * 100).toFixed(2) + '%';
-const confidenceClass = v => v === 'Élevée' ? 'high' : v === 'Moyenne' ? 'medium' : 'low';
 const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A'};
 let leagues = [];
 let active = null;
+let bankroll = Number(localStorage.getItem('bankroll') || 0);
+document.getElementById('bankroll').value = bankroll || '';
+document.getElementById('bankroll').addEventListener('input', event => {
+  bankroll = Math.max(0, Number(event.target.value) || 0);
+  localStorage.setItem('bankroll', bankroll);
+  renderBets(window.currentBets || []);
+  renderCombos(window.currentCombos || []);
+});
+const euro = fraction => {
+  if (!bankroll || fraction == null || fraction <= 0) return '—';
+  const amount = bankroll * fraction;
+  return amount.toLocaleString('fr-FR', {style:'currency', currency:'EUR', maximumFractionDigits:2});
+};
 function render() {
   const league = leagues.find(l => l.competition === active);
   document.getElementById('forecasts').innerHTML = league && league.forecasts.length ?
@@ -63,22 +80,24 @@ function render() {
     '<p>Aucune prédiction disponible pour ce championnat.</p>';
 }
 function renderBets(bets) {
+  window.currentBets = bets;
   document.getElementById('bets').innerHTML = bets.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
-    bets.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${stake(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun pari simple ne passe actuellement les critères de qualité. Cela évite de proposer des cotes dérisoires ou des paris à faible probabilité.</p>';
+    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
+    bets.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${b.confidence === 'Élevée' ? 'high' : b.confidence === 'Moyenne' ? 'medium' : 'low'}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun pari simple ne passe actuellement les critères de qualité.</p>';
 }
 function renderDoubleChance(rows) {
   document.getElementById('doubleChance').innerHTML = rows.length ?
     `<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Probabilité modèle</th><th>Confiance</th><th>Cote minimale rentable</th></tr>` +
-    rows.slice(0, 20).map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${odds(r.minimum_odds)}</td></tr>`).join('') + '</table>' :
+    rows.slice(0, 20).map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td class="${r.confidence === 'Élevée' ? 'high' : r.confidence === 'Moyenne' ? 'medium' : 'low'}">${r.confidence}</td><td>${odds(r.minimum_odds)}</td></tr>`).join('') + '</table>' :
     '<p>Aucune double chance n’atteint actuellement le seuil de 65 % de probabilité modèle.</p>';
 }
 function renderCombos(combos) {
+  window.currentCombos = combos;
   document.getElementById('combos').innerHTML = combos.length ?
-    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
-    combos.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(c.confidence)}">${c.confidence}</td><td>${stake(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun combiné ne passe actuellement les critères : probabilité combinée d’au moins 25 %, cote maximale de 8.00 et valeur attendue d’au moins 5 %.</p>';
+    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
+    combos.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${c.confidence === 'Élevée' ? 'high' : c.confidence === 'Moyenne' ? 'medium' : 'low'}">${c.confidence}</td><td>${euro(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun combiné ne passe actuellement les critères de qualité.</p>';
 }
 fetch('/api/forecasts').then(r => r.json()).then(data => {
   if (!data.ok) throw new Error(data.error);
