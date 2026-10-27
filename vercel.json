@@ -1,1 +1,8 @@
-{}
+{
+  "crons": [
+    {
+      "path": "https://ntnfcuzklqzeyrfunhtm.supabase.co/functions/v1/football-data-status-ingest-v4",
+      "schedule": "0 23 * * *"
+    }
+  ]
+}
