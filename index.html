@@ -3,11 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Suivi expérimental — Ligue 1</title>
+<title>Suivi prospectif — Football européen</title>
 <style>
 body{font-family:system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
 main{max-width:960px;margin:auto;padding:24px}
 .badge{display:inline-block;background:#7c2d12;color:#fed7aa;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+button.tab{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 14px;border-radius:999px;cursor:pointer}
+button.tab.active{background:#2563eb;border-color:#2563eb}
 table{width:100%;border-collapse:collapse;margin-top:16px;background:#1e293b;border-radius:12px;overflow:hidden}
 th,td{padding:10px;border-bottom:1px solid #334155;text-align:left}
 th{background:#334155}
@@ -16,9 +19,10 @@ th{background:#334155}
 </head>
 <body>
 <main>
-<h1>Suivi prospectif Ligue 1</h1>
+<h1>Suivi prospectif — Football européen</h1>
 <p><span class="badge">Expérimental — non validé</span></p>
 <p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle.</p>
+<div class="tabs" id="tabs"></div>
 <h2>Prédictions avant-match</h2>
 <div id="forecasts">Chargement…</div>
 <h2>Résultats rapprochés</h2>
@@ -26,10 +30,29 @@ th{background:#334155}
 </main>
 <script>
 const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A'};
+let leagues = [];
+let active = null;
+function render() {
+  const league = leagues.find(l => l.competition === active);
+  document.getElementById('forecasts').innerHTML = league && league.forecasts.length ?
+    `<table><tr><th>Match</th><th>Coup d’envoi</th><th>Dom.</th><th>Nul</th><th>Ext.</th></tr>` +
+    league.forecasts.map(f => `<tr><td>${f.home_team} — ${f.away_team}</td><td>${new Date(f.kickoff_at).toLocaleString('fr-FR')}</td><td>${pct(f.home_probability)}</td><td>${pct(f.draw_probability)}</td><td>${pct(f.away_probability)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucune prédiction disponible pour ce championnat.</p>';
+}
 fetch('/api/forecasts').then(r => r.json()).then(data => {
   if (!data.ok) throw new Error(data.error);
-  document.getElementById('forecasts').innerHTML = `<table><tr><th>Match</th><th>Coup d’envoi</th><th>Dom.</th><th>Nul</th><th>Ext.</th></tr>` +
-    data.forecasts.map(f => `<tr><td>${f.home_team} — ${f.away_team}</td><td>${f.kickoff_at}</td><td>${pct(f.home_probability)}</td><td>${pct(f.draw_probability)}</td><td>${pct(f.away_probability)}</td></tr>`).join('') + '</table>';
+  leagues = data.leagues || [];
+  document.getElementById('tabs').innerHTML = leagues.map(l =>
+    `<button class="tab" data-league="${l.competition}">${labels[l.competition] || l.competition} (${l.forecasts.length})</button>`).join('');
+  document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
+    active = button.dataset.league;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.league === active));
+    render();
+  }));
+  active = leagues[0]?.competition;
+  if (active) document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');
+  render();
   document.getElementById('results').innerHTML = data.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
     data.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
 }).catch(error => {
