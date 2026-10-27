@@ -18,6 +18,11 @@ SPORT_KEYS = {
     "Ligue 1": "soccer_france_ligue_one",
 }
 STOP = {"fc", "cf", "ac", "sc", "as", "ss", "calcio", "1901", "de", "du", "des", "the"}
+DOUBLE_CHANCE_NAMES = {
+    "Home/Draw": "1X",
+    "Home/Away": "12",
+    "Draw/Away": "X2",
+}
 
 
 def normalize(name):
@@ -61,6 +66,17 @@ def same_match(event, odds_event):
     return abs((kickoff - odds_kickoff).total_seconds()) <= 7200
 
 
+def extract_prices(match, market_key):
+    bookmaker = next(iter(match.get("bookmakers", [])), None)
+    if not bookmaker:
+        return None, None
+    market = next((m for m in bookmaker.get("markets", []) if m.get("key") == market_key), None)
+    if not market:
+        return None, None
+    prices = {o["name"]: o["price"] for o in market.get("outcomes", [])}
+    return prices, bookmaker.get("key", "the_odds_api")
+
+
 @app.get("/api/sync-odds")
 def sync_odds():
     api_key = os.environ.get("THE_ODDS_API_KEY", "")
@@ -102,7 +118,7 @@ def sync_odds():
             params = urllib.parse.urlencode({
                 "apiKey": api_key,
                 "regions": "eu",
-                "markets": "h2h",
+                "markets": "h2h,double_chance",
                 "oddsFormat": "decimal",
             })
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds?{params}"
@@ -112,25 +128,33 @@ def sync_odds():
             if not match:
                 continue
             matched += 1
-            bookmaker = next(iter(match.get("bookmakers", [])), None)
-            if not bookmaker:
-                continue
-            market = next((m for m in bookmaker.get("markets", []) if m.get("key") == "h2h"), None)
-            if not market:
-                continue
-            prices = {o["name"]: o["price"] for o in market.get("outcomes", [])}
             rows = []
-            for market_name, outcome_name in (("home", event["home_team"]), ("draw", "Draw"), ("away", event["away_team"])):
-                price = prices.get(outcome_name)
-                if price:
-                    rows.append({
-                        "event_id": event["external_id"],
-                        "home_team": event["home_team"],
-                        "away_team": event["away_team"],
-                        "market": market_name,
-                        "odds": price,
-                        "provider": bookmaker.get("key", "the_odds_api"),
-                    })
+            h2h_prices, provider = extract_prices(match, "h2h")
+            if h2h_prices:
+                for market_name, outcome_name in (("home", event["home_team"]), ("draw", "Draw"), ("away", event["away_team"])):
+                    price = h2h_prices.get(outcome_name)
+                    if price:
+                        rows.append({
+                            "event_id": event["external_id"],
+                            "home_team": event["home_team"],
+                            "away_team": event["away_team"],
+                            "market": market_name,
+                            "odds": price,
+                            "provider": provider,
+                        })
+            dc_prices, dc_provider = extract_prices(match, "double_chance")
+            if dc_prices:
+                for outcome_name, market_name in DOUBLE_CHANCE_NAMES.items():
+                    price = dc_prices.get(outcome_name)
+                    if price:
+                        rows.append({
+                            "event_id": event["external_id"],
+                            "home_team": event["home_team"],
+                            "away_team": event["away_team"],
+                            "market": market_name,
+                            "odds": price,
+                            "provider": dc_provider,
+                        })
             if rows:
                 supabase_request("live_odds", method="POST", payload=rows)
                 saved += len(rows)
