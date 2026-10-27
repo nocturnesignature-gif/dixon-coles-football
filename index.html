@@ -16,6 +16,9 @@ th,td{padding:10px;border-bottom:1px solid #334155;text-align:left}
 th{background:#334155}
 .error{color:#fca5a5}
 .positive{color:#86efac;font-weight:700}
+.high{color:#86efac;font-weight:700}
+.medium{color:#fde68a;font-weight:700}
+.low{color:#fca5a5;font-weight:700}
 .muted{color:#94a3b8;font-size:14px}
 </style>
 </head>
@@ -28,14 +31,18 @@ th{background:#334155}
 <h2>Prédictions avant-match</h2>
 <div id="forecasts">Chargement…</div>
 <h2>À miser</h2>
-<p class="muted">Seuls les paris simples affichés ont une valeur attendue d’au moins 3 %. La mise indicative est une fraction de Kelly plafonnée à 2 % de bankroll.</p>
+<p class="muted">
+  Critères de qualité : cote entre 1.45 et 3.80, probabilité modèle d’au moins 55 % et valeur attendue d’au moins 3 %.
+  Les cotes très faibles, comme 1.01, sont exclues car elles offrent un gain insuffisant pour le risque pris.
+  La mise indicative utilise une fraction de Kelly prudente, plafonnée à 2 % de bankroll.
+</p>
 <h3>Paris simples</h3>
 <div id="bets">Chargement…</div>
 <h3>Double chance</h3>
-<p class="muted">La double chance augmente la probabilité de réussite, mais exige une cote suffisante pour rester rentable. La « cote minimale » est le seuil théorique calculé par le modèle.</p>
+<p class="muted">Affiche uniquement les double chances avec au moins 65 % de probabilité modèle. La « cote minimale » est le seuil à dépasser chez le bookmaker pour que le pari soit rentable.</p>
 <div id="doubleChance">Chargement…</div>
 <h3>Combinés</h3>
-<p class="muted">Combinés limités à 2 ou 3 sélections indépendantes, chacune à valeur positive. La probabilité d’un combiné est le produit des probabilités : elle baisse rapidement.</p>
+<p class="muted">Combinés de 2 ou 3 sélections indépendantes, probabilité combinée d’au moins 25 %, cote maximale de 8.00 et valeur attendue d’au moins 5 %.</p>
 <div id="combos">Chargement…</div>
 <h2>Résultats rapprochés</h2>
 <div id="results">Chargement…</div>
@@ -44,6 +51,7 @@ th{background:#334155}
 const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
 const odds = v => v == null ? '—' : Number(v).toFixed(2);
 const stake = v => v == null || v <= 0 ? '—' : (v * 100).toFixed(2) + '%';
+const confidenceClass = v => v === 'Élevée' ? 'high' : v === 'Moyenne' ? 'medium' : 'low';
 const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A'};
 let leagues = [];
 let active = null;
@@ -56,21 +64,21 @@ function render() {
 }
 function renderBets(bets) {
   document.getElementById('bets').innerHTML = bets.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Implicite</th><th>Valeur</th><th>Mise</th></tr>` +
-    bets.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td>${pct(b.implied_probability)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td>${stake(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun pari simple ne présente actuellement une valeur attendue d’au moins 3 %.</p>';
+    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
+    bets.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${stake(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun pari simple ne passe actuellement les critères de qualité. Cela évite de proposer des cotes dérisoires ou des paris à faible probabilité.</p>';
 }
 function renderDoubleChance(rows) {
   document.getElementById('doubleChance').innerHTML = rows.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Probabilité modèle</th><th>Cote minimale rentable</th></tr>` +
-    rows.slice(0, 20).map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td>${odds(r.minimum_odds)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucune donnée de double chance disponible.</p>';
+    `<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Probabilité modèle</th><th>Confiance</th><th>Cote minimale rentable</th></tr>` +
+    rows.slice(0, 20).map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${odds(r.minimum_odds)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucune double chance n’atteint actuellement le seuil de 65 % de probabilité modèle.</p>';
 }
 function renderCombos(combos) {
   document.getElementById('combos').innerHTML = combos.length ?
-    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Mise</th></tr>` +
-    combos.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td>${stake(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun combiné rentable n’est actuellement proposé. C’est normal : les combinés ne sont affichés que si leur valeur attendue dépasse 3 %.</p>';
+    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
+    combos.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(c.confidence)}">${c.confidence}</td><td>${stake(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun combiné ne passe actuellement les critères : probabilité combinée d’au moins 25 %, cote maximale de 8.00 et valeur attendue d’au moins 5 %.</p>';
 }
 fetch('/api/forecasts').then(r => r.json()).then(data => {
   if (!data.ok) throw new Error(data.error);
