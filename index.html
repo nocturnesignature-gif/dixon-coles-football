@@ -25,6 +25,8 @@ th{background:#334155}
 <div class="tabs" id="tabs"></div>
 <h2>Prédictions avant-match</h2>
 <div id="forecasts">Chargement…</div>
+<h2>Opportunités expérimentales</h2>
+<div id="opportunities">Chargement…</div>
 <h2>Résultats rapprochés</h2>
 <div id="results">Chargement…</div>
 </main>
@@ -53,6 +55,11 @@ fetch('/api/forecasts').then(r => r.json()).then(data => {
   active = leagues[0]?.competition;
   if (active) document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');
   render();
+  const opportunities = data.opportunities || [];
+  document.getElementById('opportunities').innerHTML = opportunities.length ?
+    `<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Modèle</th><th>Cote</th><th>Implicite</th><th>Valeur</th></tr>` +
+    opportunities.map(o => `<tr><td>${labels[o.competition] || o.competition}</td><td>${o.home_team} — ${o.away_team}</td><td>${o.outcome}</td><td>${pct(o.model_probability)}</td><td>${o.odds.toFixed(2)}</td><td>${pct(o.implied_probability)}</td><td>${(o.expected_value * 100).toFixed(1)}%</td></tr>`).join('') + '</table>' :
+    '<p>Aucune opportunité avec une valeur attendue d’au moins 3 %.</p>';
   document.getElementById('results').innerHTML = data.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
     data.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
 }).catch(error => {

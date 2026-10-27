@@ -47,9 +47,46 @@ def forecasts():
             "&model_version=in.(" + ",".join(versions) + ")"
             "&order=kickoff_at.asc"
         ) if versions else []
+        odds = supabase_get(
+            "live_odds?select=event_id,market,odds,provider,captured_at"
+            "&order=captured_at.desc&limit=1000"
+        )
+        latest_odds = {}
+        for row in odds:
+            key = (row["event_id"], row["market"])
+            latest_odds.setdefault(key, row)
         by_version = {}
+        opportunities = []
         for forecast in forecasts:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
+            event_id = forecast.get("external_id")
+            for market, probability_key, outcome in (
+                ("home", "home_probability", "Domicile"),
+                ("draw", "draw_probability", "Nul"),
+                ("away", "away_probability", "Extérieur"),
+            ):
+                odd = latest_odds.get((event_id, market))
+                if not odd:
+                    continue
+                probability = forecast[probability_key]
+                implied = 1 / odd["odds"]
+                expected_value = probability * odd["odds"] - 1
+                if expected_value >= 0.03:
+                    opportunities.append({
+                        "event_id": event_id,
+                        "competition": forecast["competition"],
+                        "home_team": forecast["home_team"],
+                        "away_team": forecast["away_team"],
+                        "market": market,
+                        "outcome": outcome,
+                        "model_probability": probability,
+                        "odds": odd["odds"],
+                        "implied_probability": implied,
+                        "expected_value": expected_value,
+                        "provider": odd["provider"],
+                        "captured_at": odd["captured_at"],
+                    })
+        opportunities.sort(key=lambda x: x["expected_value"], reverse=True)
         leagues = []
         for competition in LEAGUES:
             run = latest.get(competition)
@@ -69,6 +106,7 @@ def forecasts():
             "ok": True,
             "status": "experimental_unvalidated",
             "leagues": leagues,
+            "opportunities": opportunities,
             "results": results,
         })
     except urllib.error.HTTPError as exc:
