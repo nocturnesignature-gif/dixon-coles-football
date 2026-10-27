@@ -11,11 +11,11 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 SPORT_KEYS = {
-    "premier_league": "soccer_epl",
-    "la_liga": "soccer_spain_la_liga",
-    "bundesliga": "soccer_germany_bundesliga",
-    "serie_a": "soccer_italy_serie_a",
-    "ligue_1": "soccer_france_ligue_one",
+    "Premier League": "soccer_epl",
+    "Primera Division": "soccer_spain_la_liga",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "Serie A": "soccer_italy_serie_a",
+    "Ligue 1": "soccer_france_ligue_one",
 }
 STOP = {"fc", "cf", "ac", "sc", "as", "ss", "calcio", "1901", "de", "du", "des", "the"}
 
@@ -86,6 +86,7 @@ def sync_odds():
                     "active": len(active_events),
                     "future": len(future_events),
                     "next_7_days": len(events),
+                    "supported_competitions": len([e for e in events if e.get("competition") in SPORT_KEYS]),
                 },
                 "sample_events": [
                     {k: e.get(k) for k in ("source", "active", "competition", "home_team", "away_team", "kickoff_at")}
