@@ -2,12 +2,16 @@ import json
 import os
 import urllib.request
 import urllib.error
+from itertools import combinations
 from flask import Flask, jsonify
 
 app = Flask(__name__)
 
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 RESULTS_VIEW = "football_model_prospective_results_v4"
+MIN_EDGE = 0.03
+MAX_COMBO_LEGS = 3
+MAX_COMBOS = 10
 
 
 def supabase_get(path: str):
@@ -28,6 +32,12 @@ def supabase_get(path: str):
         if response.status != 200:
             raise RuntimeError(f"Supabase returned HTTP {response.status}")
         return json.load(response)
+
+
+def kelly_fraction(expected_value, odds):
+    if odds <= 1 or expected_value <= 0:
+        return 0
+    return min(0.02, 0.25 * expected_value / (odds - 1))
 
 
 @app.get("/api/forecasts")
@@ -56,37 +66,95 @@ def forecasts():
             key = (row["event_id"], row["market"])
             latest_odds.setdefault(key, row)
         by_version = {}
-        opportunities = []
+        bets = []
+        double_chance = []
         for forecast in forecasts:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
             event_id = forecast.get("external_id")
-            for market, probability_key, outcome in (
-                ("home", "home_probability", "Domicile"),
-                ("draw", "draw_probability", "Nul"),
-                ("away", "away_probability", "Extérieur"),
+            probabilities = {
+                "home": forecast["home_probability"],
+                "draw": forecast["draw_probability"],
+                "away": forecast["away_probability"],
+            }
+            for market, outcome in (
+                ("home", "Domicile"),
+                ("draw", "Nul"),
+                ("away", "Extérieur"),
             ):
                 odd = latest_odds.get((event_id, market))
                 if not odd:
                     continue
-                probability = forecast[probability_key]
-                implied = 1 / odd["odds"]
+                probability = probabilities[market]
                 expected_value = probability * odd["odds"] - 1
-                if expected_value >= 0.03:
-                    opportunities.append({
+                if expected_value >= MIN_EDGE:
+                    bets.append({
                         "event_id": event_id,
                         "competition": forecast["competition"],
                         "home_team": forecast["home_team"],
                         "away_team": forecast["away_team"],
+                        "kickoff_at": forecast["kickoff_at"],
                         "market": market,
                         "outcome": outcome,
                         "model_probability": probability,
                         "odds": odd["odds"],
-                        "implied_probability": implied,
+                        "implied_probability": 1 / odd["odds"],
                         "expected_value": expected_value,
+                        "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
                         "provider": odd["provider"],
                         "captured_at": odd["captured_at"],
                     })
-        opportunities.sort(key=lambda x: x["expected_value"], reverse=True)
+            for market, outcome, probability in (
+                ("1X", "Domicile ou nul", probabilities["home"] + probabilities["draw"]),
+                ("12", "Domicile ou extérieur", probabilities["home"] + probabilities["away"]),
+                ("X2", "Nul ou extérieur", probabilities["draw"] + probabilities["away"]),
+            ):
+                double_chance.append({
+                    "event_id": event_id,
+                    "competition": forecast["competition"],
+                    "home_team": forecast["home_team"],
+                    "away_team": forecast["away_team"],
+                    "kickoff_at": forecast["kickoff_at"],
+                    "market": market,
+                    "outcome": outcome,
+                    "model_probability": probability,
+                    "minimum_odds": round(1 / probability, 3) if probability > 0 else None,
+                })
+        bets.sort(key=lambda x: x["expected_value"], reverse=True)
+        double_chance.sort(key=lambda x: x["model_probability"], reverse=True)
+        combos = []
+        eligible = [bet for bet in bets if bet["expected_value"] > 0]
+        for size in (2, 3):
+            if size > MAX_COMBO_LEGS:
+                break
+            for selection in combinations(eligible, size):
+                if len({bet["event_id"] for bet in selection}) != size:
+                    continue
+                probability = 1
+                combined_odds = 1
+                for bet in selection:
+                    probability *= bet["model_probability"]
+                    combined_odds *= bet["odds"]
+                expected_value = probability * combined_odds - 1
+                if expected_value < MIN_EDGE:
+                    continue
+                combos.append({
+                    "legs": [
+                        {
+                            "event_id": bet["event_id"],
+                            "match": f"{bet['home_team']} — {bet['away_team']}",
+                            "outcome": bet["outcome"],
+                            "model_probability": bet["model_probability"],
+                            "odds": bet["odds"],
+                        }
+                        for bet in selection
+                    ],
+                    "combined_odds": combined_odds,
+                    "model_probability": probability,
+                    "expected_value": expected_value,
+                    "suggested_stake_fraction": kelly_fraction(expected_value, combined_odds),
+                })
+        combos.sort(key=lambda x: x["expected_value"], reverse=True)
+        combos = combos[:MAX_COMBOS]
         leagues = []
         for competition in LEAGUES:
             run = latest.get(competition)
@@ -106,7 +174,9 @@ def forecasts():
             "ok": True,
             "status": "experimental_unvalidated",
             "leagues": leagues,
-            "opportunities": opportunities,
+            "bets": bets,
+            "double_chance": double_chance,
+            "combos": combos,
             "results": results,
         })
     except urllib.error.HTTPError as exc:
