@@ -20,6 +20,14 @@ class SupabaseError(Exception):
         self.body = body
 
 
+class NtfyError(Exception):
+    def __init__(self, status, url, body):
+        super().__init__(f"ntfy HTTP {status}")
+        self.status = status
+        self.url = url
+        self.body = body
+
+
 def supabase_request(path, method="GET", payload=None):
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -62,14 +70,19 @@ def send_ntfy(message, title, priority="default", tags=None):
         "priority": priority,
         "tags": tags or ["soccer"],
     }
+    url = "https://ntfy.sh/"
     request = urllib.request.Request(
-        "https://ntfy.sh/",
+        url,
         method="POST",
         headers={"Content-Type": "application/json"},
         data=json.dumps(payload).encode(),
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return response.status
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:500]
+        raise NtfyError(exc.code, url, body) from exc
 
 
 def kelly_fraction(expected_value, odds):
@@ -148,6 +161,8 @@ def check_alerts():
         alerts.sort(key=lambda x: x["expected_value"], reverse=True)
         sent = 0
         persistence_errors = 0
+        notification_errors = 0
+        last_notification_error = None
         for alert in alerts:
             message = (
                 f"{alert['home_team']} — {alert['away_team']}\n"
@@ -157,7 +172,16 @@ def check_alerts():
                 f"Mise indicative : {alert['suggested_stake_fraction'] * 100:.2f}% de cagnotte"
             )
             priority = "high" if alert["expected_value"] >= 0.25 else "default"
-            send_ntfy(message, "Très bon pari détecté", priority=priority, tags=["soccer", "moneybag"])
+            try:
+                send_ntfy(message, "Très bon pari détecté", priority=priority, tags=["soccer", "moneybag"])
+            except NtfyError as exc:
+                notification_errors += 1
+                last_notification_error = {
+                    "status": exc.status,
+                    "url": exc.url,
+                    "details": exc.body,
+                }
+                continue
             if alerts_table_available:
                 try:
                     supabase_request("bet_alerts", method="POST", payload=[{
@@ -180,6 +204,8 @@ def check_alerts():
             "ok": True,
             "alerts_found": len(alerts),
             "alerts_sent": sent,
+            "notification_errors": notification_errors,
+            "last_notification_error": last_notification_error,
             "topic": NTFY_TOPIC,
             "alerts_table_available": alerts_table_available,
             "persistence_errors": persistence_errors,
@@ -191,7 +217,5 @@ def check_alerts():
             "url": exc.url,
             "details": exc.body,
         }), 502
-    except urllib.error.HTTPError as exc:
-        return jsonify({"ok": False, "error": f"upstream_http_{exc.code}"}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "alert_check_failed"}), 500
