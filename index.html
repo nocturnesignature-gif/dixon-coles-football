@@ -12,8 +12,10 @@ h1{font-size:1.5rem;margin:0 0 12px}
 @media(min-width:768px){h1{font-size:2rem}}
 .badge{display:inline-block;background:#7c2d12;color:#fed7aa;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
 .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+button{font:inherit}
 button.tab{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 12px;border-radius:999px;cursor:pointer;font-size:14px}
 button.tab.active{background:#2563eb;border-color:#2563eb}
+button.follow{background:#16a34a;color:white;border:none;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13px}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;border-radius:12px}
 table{width:100%;min-width:640px;border-collapse:collapse;background:#1e293b;border-radius:12px;overflow:hidden}
 th,td{padding:10px;border-bottom:1px solid #334155;text-align:left;white-space:nowrap}
@@ -21,6 +23,7 @@ th{background:#334155;font-size:13px}
 td{font-size:14px}
 .error{color:#fca5a5}
 .positive{color:#86efac;font-weight:700}
+.negative{color:#fca5a5;font-weight:700}
 .high{color:#86efac;font-weight:700}
 .medium{color:#fde68a;font-weight:700}
 .low{color:#fca5a5;font-weight:700}
@@ -53,13 +56,15 @@ input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #33415
 </div>
 <p class="muted" id="profileSummary">L’API applique automatiquement les seuils de la stratégie choisie : EV, cote, probabilité et nombre de jambes.</p>
 <h2>À miser — tous championnats confondus</h2>
-<p class="muted">Les combinés peuvent mélanger paris simples et double chance de différents championnats. Une même rencontre ne peut pas apparaître deux fois dans un combiné.</p>
 <h3>Paris simples</h3>
 <div class="table-wrap" id="bets">Chargement…</div>
 <h3>Double chance</h3>
 <div class="table-wrap" id="doubleChance">Chargement…</div>
 <h3>Combinés</h3>
 <div class="table-wrap" id="combos">Chargement…</div>
+<h2>Journal de paris</h2>
+<p class="muted">Enregistre la cote réellement prise. La cote de clôture et le résultat pourront être ajoutés après le match afin de calculer le CLV.</p>
+<div class="table-wrap" id="betJournal">Chargement…</div>
 <h2>Prédictions par championnat</h2>
 <div class="tabs" id="tabs"></div>
 <div class="table-wrap" id="forecasts">Chargement…</div>
@@ -96,11 +101,39 @@ function render() {
     league.forecasts.map(f => `<tr><td>${f.home_team} — ${f.away_team}</td><td>${new Date(f.kickoff_at).toLocaleString('fr-FR')}</td><td>${pct(f.home_probability)}</td><td>${pct(f.draw_probability)}</td><td>${pct(f.away_probability)}</td></tr>`).join('') + '</table>' :
     '<p>Aucune prédiction disponible pour ce championnat.</p>';
 }
+function followBet(bet) {
+  const placedOdds = prompt(`Cote réellement prise pour « ${bet.outcome} » ?`, bet.odds);
+  if (!placedOdds) return;
+  const stakeAmount = bankroll ? bet.suggested_stake_fraction * bankroll : null;
+  fetch('/api/bets', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      event_id: bet.event_id,
+      competition: bet.competition,
+      home_team: bet.home_team,
+      away_team: bet.away_team,
+      kickoff_at: bet.kickoff_at,
+      market: bet.market,
+      outcome: bet.outcome,
+      model_probability: bet.model_probability,
+      placed_odds: Number(placedOdds),
+      expected_value: bet.expected_value,
+      stake_fraction: bet.suggested_stake_fraction,
+      stake_amount: stakeAmount,
+      profile: document.getElementById('profile').value,
+    })
+  }).then(r => r.json()).then(response => {
+    if (!response.ok) throw new Error(response.error);
+    loadJournal();
+  }).catch(error => alert('Impossible d’enregistrer le pari : ' + error.message));
+}
 function renderBets() {
   const rows = data?.bets || [];
   document.getElementById('bets').innerHTML = rows.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
-    rows.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th><th></th></tr>` +
+    rows.map((b, i) => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td><td><button class="follow" onclick='followBet(JSON.parse(document.getElementById("bet-${i}").textContent))'>Suivre</button></td></tr>`).join('') +
+    rows.map((b, i) => `<script type="application/json" id="bet-${i}">${JSON.stringify(b).replace(/</g, '\\u003c')}<\/script>`).join('') + '</table>' :
     '<p>Aucun pari simple validé par la stratégie actuelle.</p>';
 }
 function renderDoubleChance() {
@@ -122,6 +155,20 @@ function renderProfile() {
   if (!f) return;
   document.getElementById('profileSummary').textContent =
     `Stratégie ${data.profile_label} : EV ≥ ${(f.minimum_expected_value * 100).toFixed(0)} %, cote ≤ ${Number(f.maximum_odds).toFixed(2)}, probabilité simple ≥ ${(f.minimum_single_probability * 100).toFixed(0)} %, combinés ≤ ${f.maximum_combo_legs} jambes.`;
+}
+function loadJournal() {
+  fetch('/api/bets').then(r => r.json()).then(response => {
+    if (!response.ok) throw new Error(response.error);
+    const bets = response.bets || [];
+    const summary = response.summary || {};
+    document.getElementById('betJournal').innerHTML = `
+      <p class="muted">Paris : ${summary.total ?? 0} — Réglés : ${summary.settled ?? 0} — CLV moyen : ${summary.average_clv == null ? '—' : (summary.average_clv * 100).toFixed(2) + '%'} — Profit : ${Number(summary.total_profit || 0).toFixed(2)} unités</p>` +
+      (bets.length ? `<table><tr><th>Date</th><th>Match</th><th>Paris</th><th>Cote prise</th><th>EV</th><th>Mise</th><th>CLV</th><th>Résultat</th><th>Profit</th></tr>` +
+      bets.map(b => `<tr><td>${new Date(b.created_at).toLocaleDateString('fr-FR')}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${odds(b.placed_odds)}</td><td>${pct(b.expected_value)}</td><td>${b.stake_amount == null ? '—' : Number(b.stake_amount).toFixed(2) + ' €'}</td><td>${b.closing_line_value == null ? '—' : (b.closing_line_value * 100).toFixed(2) + '%'}</td><td>${b.result || 'pending'}</td><td class="${b.profit >= 0 ? 'positive' : 'negative'}">${b.profit == null ? '—' : Number(b.profit).toFixed(2)}</td></tr>`).join('') + '</table>' :
+      '<p>Aucun pari enregistré.</p>');
+  }).catch(error => {
+    document.getElementById('betJournal').innerHTML = `<p class="error">Impossible de charger le journal : ${error.message}</p>`;
+  });
 }
 function load() {
   const profile = document.getElementById('profile').value;
@@ -149,6 +196,7 @@ function load() {
   }).catch(error => {
     document.getElementById('bets').innerHTML = `<p class="error">Impossible de charger les sélections.</p>`;
   });
+  loadJournal();
 }
 load();
 </script>
