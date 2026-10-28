@@ -6,6 +6,7 @@ per-league calibration and discrimination metrics.
 """
 
 import json
+import traceback
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -30,9 +31,15 @@ def load_matches() -> list[dict]:
     matches = []
     for path in LEAGUE_FILES:
         if not Path(path).exists():
+            print(f"Skipping missing file: {path}")
             continue
         df = pd.read_csv(path)
         df = df.dropna(subset=["HomeTeam", "AwayTeam", "FTHG", "FTAG", "Date"])
+        df["MatchDate"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+        invalid = df["MatchDate"].isna().sum()
+        if invalid:
+            print(f"Skipping {invalid} rows with invalid dates in {path}")
+        df = df.dropna(subset=["MatchDate"])
         for row in df.itertuples(index=False):
             matches.append({
                 "league": Path(path).stem,
@@ -40,9 +47,10 @@ def load_matches() -> list[dict]:
                 "away": str(row.AwayTeam).strip(),
                 "home_goals": int(row.FTHG),
                 "away_goals": int(row.FTAG),
-                "date": datetime.strptime(str(row.Date), "%d/%m/%Y").date(),
+                "date": row.MatchDate.date(),
             })
     matches.sort(key=lambda m: m["date"])
+    print(f"Loaded {len(matches)} valid matches")
     return matches
 
 
@@ -95,7 +103,7 @@ def calibration(rows: list[dict]) -> list[dict]:
 def main() -> None:
     matches = load_matches()
     if len(matches) <= MIN_TRAINING_MATCHES:
-        raise ValueError(f"Need more than {MIN_TRAINING_MATCHES} matches")
+        raise ValueError(f"Need more than {MIN_TRAINING_MATCHES} matches; loaded {len(matches)}")
 
     model = DixonColesModel(half_life_days=365)
     last_fit_size = -1
@@ -104,7 +112,7 @@ def main() -> None:
     for index, match in enumerate(matches):
         if index < MIN_TRAINING_MATCHES:
             continue
-        if index - MIN_TRAINING_MATCHES >= last_fit_size + REFIT_EVERY or last_fit_size < 0:
+        if last_fit_size < 0 or index - MIN_TRAINING_MATCHES >= last_fit_size + REFIT_EVERY:
             training = matches[:index]
             model.fit([m.copy() for m in training])
             last_fit_size = index
@@ -145,7 +153,7 @@ def main() -> None:
         by_league[row["league"]].append(row)
 
     report = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now().isoformat() + "Z",
         "method": "Walk-forward; model trained only on prior matches",
         "refit_every_matches": REFIT_EVERY,
         "minimum_training_matches": MIN_TRAINING_MATCHES,
@@ -161,4 +169,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        raise
