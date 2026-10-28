@@ -28,14 +28,29 @@ jobs:
       - name: Run global backtest
         run: python scripts/backtest.py
 
+      - name: Inspect generated reports
+        run: |
+          find reports -maxdepth 2 -type f -print
+          test -f reports/backtest_metrics.json
+          test -f reports/backtest_predictions.csv
+
+      - name: Upload backtest reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-reports
+          path: reports/
+          if-no-files-found: error
+
       - name: Commit reports
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add reports/backtest_metrics.json reports/backtest_predictions.csv
+          git add -A reports/
           if git diff --staged --quiet; then
             echo "No report changes to commit"
-          else
-            git commit -m "Update performance backtest reports"
-            git push
+            exit 0
           fi
+          git commit -m "Update performance backtest reports"
+          git fetch origin main
+          git rebase origin/main
+          git push
