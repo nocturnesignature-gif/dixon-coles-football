@@ -1,0 +1,24 @@
+name: Capture closing odds
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Capture closing odds for imminent bets
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://paris-predictions.vercel.app' }}
+        run: |
+          response=$(curl -sS --fail --max-time 120 \
+            -w '\n%{http_code}' \
+            "$APP_URL/api/capture-closing-odds")
+          echo "$response"
+          status=$(echo "$response" | tail -n 1)
+          if [ "$status" != "200" ]; then
+            echo "Closing odds capture failed with HTTP $status"
+            exit 1
+          fi
