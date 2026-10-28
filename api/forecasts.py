@@ -1,9 +1,17 @@
+"""Forecast API with calibrated probabilities and risk controls."""
+
 import json
 import os
 import urllib.request
 import urllib.error
 from itertools import combinations
 from flask import Flask, jsonify, request
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.calibration import calibrate_1x2
 
 app = Flask(__name__)
 
@@ -63,14 +71,13 @@ class SupabaseError(Exception):
         self.body = body
 
 
-def supabase_get(path: str):
+def supabase_get(path):
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not base_url or not service_key:
         raise RuntimeError("Missing Supabase server environment configuration")
-    url = f"{base_url}/rest/v1/{path}"
-    request = urllib.request.Request(
-        url,
+    req = urllib.request.Request(
+        f"{base_url}/rest/v1/{path}",
         headers={
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
@@ -78,13 +85,12 @@ def supabase_get(path: str):
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(req, timeout=20) as response:
             if response.status != 200:
-                raise SupabaseError(response.status, url, "")
+                raise SupabaseError(response.status, "", "")
             return json.load(response)
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")[:500]
-        raise SupabaseError(exc.code, url, body) from exc
+        raise SupabaseError(exc.code, "", exc.read().decode(errors="replace")[:500]) from exc
 
 
 def kelly_fraction(expected_value, odds):
@@ -101,15 +107,23 @@ def confidence(probability):
     return "Faible"
 
 
-def selection_score(item):
+def score(item):
     return item["expected_value"] * item["model_probability"]
+
+
+def calibrated_probabilities(forecast):
+    return calibrate_1x2(
+        forecast["home_probability"],
+        forecast["draw_probability"],
+        forecast["away_probability"],
+    )
 
 
 @app.get("/api/forecasts")
 def forecasts():
     profile_key = request.args.get("profile", "balanced").lower()
     if profile_key not in PROFILES:
-        return jsonify({"ok": False, "error": "invalid_profile", "valid_profiles": list(PROFILES)}), 400
+        return jsonify({"ok": False, "error": "invalid_profile"}), 400
     profile = PROFILES[profile_key]
 
     try:
@@ -127,29 +141,23 @@ def forecasts():
             "&model_version=in.(" + ",".join(versions) + ")"
             "&order=kickoff_at.asc"
         ) if versions else []
-        odds = supabase_get(
+        odds_rows = supabase_get(
             "live_odds?select=event_id,market,odds,provider,captured_at"
             "&order=captured_at.desc&limit=1000"
         )
         latest_odds = {}
-        for row in odds:
+        for row in odds_rows:
             latest_odds.setdefault((row["event_id"], row["market"]), row)
+
         by_version = {}
         bets = []
         double_chance_by_event = {}
         for forecast in forecasts:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
             event_id = forecast.get("external_id")
-            probabilities = {
-                "home": forecast["home_probability"],
-                "draw": forecast["draw_probability"],
-                "away": forecast["away_probability"],
-            }
-            for market, outcome in (
-                ("home", "Domicile"),
-                ("draw", "Nul"),
-                ("away", "Extérieur"),
-            ):
+            probabilities = calibrated_probabilities(forecast)
+
+            for market, outcome in (("home", "Domicile"), ("draw", "Nul"), ("away", "Extérieur")):
                 odd = latest_odds.get((event_id, market))
                 if not odd:
                     continue
@@ -170,29 +178,27 @@ def forecasts():
                     "market": market,
                     "outcome": outcome,
                     "model_probability": probability,
+                    "raw_model_probability": forecast[f"{market}_probability"],
                     "odds": odd["odds"],
-                    "implied_probability": 1 / odd["odds"],
                     "expected_value": expected_value,
                     "confidence": confidence(probability),
                     "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
                     "provider": odd["provider"],
                     "captured_at": odd["captured_at"],
                 })
-            dc_probabilities = {
-                "1X": ("Domicile ou nul", probabilities["home"] + probabilities["draw"]),
-                "12": ("Domicile ou extérieur", probabilities["home"] + probabilities["away"]),
-                "X2": ("Nul ou extérieur", probabilities["draw"] + probabilities["away"]),
+
+            dc = {
+                "1X": probabilities["home"] + probabilities["draw"],
+                "12": probabilities["home"] + probabilities["away"],
+                "X2": probabilities["draw"] + probabilities["away"],
             }
-            best_dc = None
-            for market, (outcome, probability) in dc_probabilities.items():
+            best = None
+            for market, probability in dc.items():
                 odd = latest_odds.get((event_id, market))
                 if not odd:
                     continue
                 expected_value = probability * odd["odds"] - 1
-                if (
-                    probability < profile["minimum_double_chance_probability"]
-                    or expected_value < profile["minimum_double_chance_expected_value"]
-                ):
+                if probability < profile["minimum_double_chance_probability"] or expected_value < profile["minimum_double_chance_expected_value"]:
                     continue
                 candidate = {
                     "event_id": event_id,
@@ -201,29 +207,28 @@ def forecasts():
                     "away_team": forecast["away_team"],
                     "kickoff_at": forecast["kickoff_at"],
                     "market": market,
-                    "outcome": outcome,
+                    "outcome": market,
                     "model_probability": probability,
                     "odds": odd["odds"],
-                    "implied_probability": 1 / odd["odds"],
                     "expected_value": expected_value,
                     "confidence": confidence(probability),
                     "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]),
                     "provider": odd["provider"],
                     "captured_at": odd["captured_at"],
                 }
-                if best_dc is None or selection_score(candidate) > selection_score(best_dc):
-                    best_dc = candidate
-            if best_dc:
-                double_chance_by_event[event_id] = best_dc
-        double_chance = sorted(double_chance_by_event.values(), key=selection_score, reverse=True)
-        bets.sort(key=selection_score, reverse=True)
-        combo_candidates = bets + double_chance
-        combo_candidates.sort(key=selection_score, reverse=True)
+                if best is None or score(candidate) > score(best):
+                    best = candidate
+            if best:
+                double_chance_by_event[event_id] = best
+
+        double_chance = sorted(double_chance_by_event.values(), key=score, reverse=True)
+        bets.sort(key=score, reverse=True)
+        candidates = bets + double_chance
+        candidates.sort(key=score, reverse=True)
         combos = []
-        max_legs = min(profile["maximum_combo_legs"], MAX_COMBO_LEGS)
-        for size in range(2, max_legs + 1):
-            for selection in combinations(combo_candidates, size):
-                if len({bet["event_id"] for bet in selection}) != size:
+        for size in range(2, min(profile["maximum_combo_legs"], MAX_COMBO_LEGS) + 1):
+            for selection in combinations(candidates, size):
+                if len({b["event_id"] for b in selection}) != size:
                     continue
                 probability = 1
                 combined_odds = 1
@@ -231,32 +236,26 @@ def forecasts():
                     probability *= bet["model_probability"]
                     combined_odds *= bet["odds"]
                 expected_value = probability * combined_odds - 1
-                if (
-                    probability < profile["minimum_combo_probability"]
-                    or combined_odds > profile["maximum_combo_odds"]
-                    or expected_value < profile["minimum_combo_expected_value"]
-                ):
+                if probability < profile["minimum_combo_probability"] or combined_odds > profile["maximum_combo_odds"] or expected_value < profile["minimum_combo_expected_value"]:
                     continue
                 combos.append({
-                    "legs": [
-                        {
-                            "event_id": bet["event_id"],
-                            "match": f"{bet['home_team']} — {bet['away_team']}",
-                            "market": bet["market"],
-                            "outcome": bet["outcome"],
-                            "model_probability": bet["model_probability"],
-                            "odds": bet["odds"],
-                        }
-                        for bet in selection
-                    ],
+                    "legs": [{
+                        "event_id": b["event_id"],
+                        "match": f"{b['home_team']} — {b['away_team']}",
+                        "market": b["market"],
+                        "outcome": b["outcome"],
+                        "model_probability": b["model_probability"],
+                        "odds": b["odds"],
+                    } for b in selection],
                     "combined_odds": combined_odds,
                     "model_probability": probability,
                     "expected_value": expected_value,
                     "confidence": confidence(probability),
                     "suggested_stake_fraction": kelly_fraction(expected_value, combined_odds),
                 })
-        combos.sort(key=selection_score, reverse=True)
+        combos.sort(key=score, reverse=True)
         combos = combos[:MAX_COMBOS]
+
         leagues = []
         for competition in LEAGUES:
             run = latest.get(competition)
@@ -264,11 +263,7 @@ def forecasts():
                 continue
             leagues.append({
                 "competition": competition,
-                "model": {
-                    "id": run["id"],
-                    "version": run["model_version"],
-                    "status": run["status"],
-                },
+                "model": {"id": run["id"], "version": run["model_version"], "status": run["status"]},
                 "forecasts": by_version.get(run["model_version"], []),
             })
         results = supabase_get(f"{RESULTS_VIEW}?select=*&order=kickoff_at.asc")
@@ -277,14 +272,14 @@ def forecasts():
             "status": "experimental_unvalidated",
             "profile": profile_key,
             "profile_label": profile["label"],
-            "available_profiles": {
-                key: {"label": value["label"], **value} for key, value in PROFILES.items()
+            "calibration": {
+                "applied": True,
+                "high_probability_threshold": 0.65,
+                "observed_high_probability_hit_rate": 0.6412451361867705,
             },
-            "filters": profile,
             "risk_controls": {
                 "maximum_kelly_fraction": MAX_KELLY_FRACTION,
                 "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION,
-                "note": "Ne jamais dépasser 5 % d’exposition totale sur une même journée.",
             },
             "leagues": leagues,
             "bets": bets,
