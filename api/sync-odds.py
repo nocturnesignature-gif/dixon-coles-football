@@ -1,3 +1,5 @@
+"""Odds synchronization API using The Odds API."""
+
 import json
 import os
 import re
@@ -18,11 +20,6 @@ SPORT_KEYS = {
     "Ligue 1": "soccer_france_ligue_one",
 }
 STOP = {"fc", "cf", "ac", "sc", "as", "ss", "calcio", "1901", "de", "du", "des", "the"}
-DOUBLE_CHANCE_NAMES = {
-    "Home/Draw": "1X",
-    "Home/Away": "12",
-    "Draw/Away": "X2",
-}
 
 
 def normalize(name):
@@ -111,53 +108,52 @@ def sync_odds():
             })
         saved = 0
         matched = 0
+        requested_sports = set()
         for event in events:
             sport_key = SPORT_KEYS.get(event["competition"])
-            if not sport_key:
+            if not sport_key or sport_key in requested_sports:
                 continue
+            requested_sports.add(sport_key)
             params = urllib.parse.urlencode({
                 "apiKey": api_key,
                 "regions": "eu",
-                "markets": "h2h,double_chance",
+                "markets": "h2h",
                 "oddsFormat": "decimal",
             })
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds?{params}"
-            with urllib.request.urlopen(url, timeout=20) as response:
-                odds_events = json.load(response)
-            match = next((o for o in odds_events if same_match(event, o)), None)
-            if not match:
-                continue
-            matched += 1
-            rows = []
-            h2h_prices, provider = extract_prices(match, "h2h")
-            if h2h_prices:
-                for market_name, outcome_name in (("home", event["home_team"]), ("draw", "Draw"), ("away", event["away_team"])):
-                    price = h2h_prices.get(outcome_name)
-                    if price:
-                        rows.append({
-                            "event_id": event["external_id"],
-                            "home_team": event["home_team"],
-                            "away_team": event["away_team"],
-                            "market": market_name,
-                            "odds": price,
-                            "provider": provider,
-                        })
-            dc_prices, dc_provider = extract_prices(match, "double_chance")
-            if dc_prices:
-                for outcome_name, market_name in DOUBLE_CHANCE_NAMES.items():
-                    price = dc_prices.get(outcome_name)
-                    if price:
-                        rows.append({
-                            "event_id": event["external_id"],
-                            "home_team": event["home_team"],
-                            "away_team": event["away_team"],
-                            "market": market_name,
-                            "odds": price,
-                            "provider": dc_provider,
-                        })
-            if rows:
-                supabase_request("live_odds", method="POST", payload=rows)
-                saved += len(rows)
+            try:
+                with urllib.request.urlopen(url, timeout=20) as response:
+                    odds_events = json.load(response)
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode(errors="replace")[:300]
+                return jsonify({
+                    "ok": False,
+                    "error": f"odds_api_http_{exc.code}",
+                    "sport_key": sport_key,
+                    "details": detail,
+                }), 502
+            for odds_event in odds_events:
+                event = next((e for e in events if SPORT_KEYS.get(e["competition"]) == sport_key and same_match(e, odds_event)), None)
+                if not event:
+                    continue
+                matched += 1
+                rows = []
+                h2h_prices, provider = extract_prices(odds_event, "h2h")
+                if h2h_prices:
+                    for market_name, outcome_name in (("home", event["home_team"]), ("draw", "Draw"), ("away", event["away_team"])):
+                        price = h2h_prices.get(outcome_name)
+                        if price:
+                            rows.append({
+                                "event_id": event["external_id"],
+                                "home_team": event["home_team"],
+                                "away_team": event["away_team"],
+                                "market": market_name,
+                                "odds": price,
+                                "provider": provider,
+                            })
+                if rows:
+                    supabase_request("live_odds", method="POST", payload=rows)
+                    saved += len(rows)
         return jsonify({"ok": True, "events_processed": len(events), "events_matched": matched, "odds_saved": saved})
     except urllib.error.HTTPError as exc:
         return jsonify({"ok": False, "error": f"odds_api_http_{exc.code}"}), 502
