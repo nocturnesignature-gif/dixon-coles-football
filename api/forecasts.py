@@ -1,10 +1,9 @@
-"""Forecast API with calibrated probabilities and risk controls."""
+"""Forecast API with per-outcome historical calibration and risk controls."""
 
 import json
 import os
 import urllib.request
 import urllib.error
-from itertools import combinations
 from flask import Flask, jsonify, request
 
 import sys
@@ -18,7 +17,6 @@ app = Flask(__name__)
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 RESULTS_VIEW = "football_model_prospective_results_v4"
 MIN_ODDS = 1.45
-MAX_COMBO_LEGS = 3
 MAX_COMBOS = 10
 MAX_KELLY_FRACTION = 0.01
 MAX_DAILY_EXPOSURE_FRACTION = 0.05
@@ -32,36 +30,18 @@ PROFILES = {
         "minimum_single_probability": 0.65,
         "minimum_expected_value": 0.03,
         "maximum_odds": 2.00,
-        "minimum_double_chance_probability": 0.70,
-        "minimum_double_chance_expected_value": 0.02,
-        "minimum_combo_probability": 0.45,
-        "minimum_combo_expected_value": 0.03,
-        "maximum_combo_odds": 3.00,
-        "maximum_combo_legs": 2,
     },
     "balanced": {
         "label": "Équilibré",
         "minimum_single_probability": 0.55,
         "minimum_expected_value": 0.05,
         "maximum_odds": 3.80,
-        "minimum_double_chance_probability": 0.65,
-        "minimum_double_chance_expected_value": 0.03,
-        "minimum_combo_probability": 0.30,
-        "minimum_combo_expected_value": 0.05,
-        "maximum_combo_odds": 5.00,
-        "maximum_combo_legs": 3,
     },
     "value": {
         "label": "Valeur",
         "minimum_single_probability": 0.45,
         "minimum_expected_value": 0.10,
         "maximum_odds": 5.00,
-        "minimum_double_chance_probability": 0.60,
-        "minimum_double_chance_expected_value": 0.05,
-        "minimum_combo_probability": 0.20,
-        "minimum_combo_expected_value": 0.08,
-        "maximum_combo_odds": 8.00,
-        "maximum_combo_legs": 3,
     },
 }
 
@@ -114,14 +94,6 @@ def score(item):
     return item["expected_value"] * item["model_probability"]
 
 
-def calibrated_probabilities(forecast):
-    return calibrate_1x2(
-        forecast["home_probability"],
-        forecast["draw_probability"],
-        forecast["away_probability"],
-    )
-
-
 def implausible(forecast):
     values = [
         forecast["home_probability"],
@@ -161,13 +133,26 @@ def forecasts():
         for row in odds_rows:
             latest_odds.setdefault((row["event_id"], row["market"]), row)
 
+        try:
+            history = supabase_get(
+                f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome"
+                "&actual_outcome=not.is.null"
+                "&order=kickoff_at.desc&limit=500"
+            )
+        except SupabaseError:
+            history = []
+
         by_version = {}
         bets = []
-        double_chance_by_event = {}
         for forecast in forecasts:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
             event_id = forecast.get("external_id")
-            probabilities = calibrated_probabilities(forecast)
+            probabilities = calibrate_1x2(
+                forecast["home_probability"],
+                forecast["draw_probability"],
+                forecast["away_probability"],
+                history,
+            )
             forecast["calibrated_home_probability"] = probabilities["home"]
             forecast["calibrated_draw_probability"] = probabilities["draw"]
             forecast["calibrated_away_probability"] = probabilities["away"]
@@ -226,9 +211,8 @@ def forecasts():
             "profile": profile_key,
             "profile_label": profile["label"],
             "calibration": {
-                "applied": True,
-                "high_probability_threshold": 0.65,
-                "observed_high_probability_hit_rate": 0.6412451361867705,
+                "method": "per_outcome_logistic" if len(history) >= 50 else "legacy_high_probability_shrinkage",
+                "history_rows": len(history),
                 "maximum_expected_value": MAX_EXPECTED_VALUE,
                 "plausible_probability_range": [MIN_PLAUSIBLE_PROBABILITY, MAX_PLAUSIBLE_PROBABILITY],
             },
