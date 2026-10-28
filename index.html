@@ -20,8 +20,9 @@ th{background:#334155}
 .medium{color:#fde68a;font-weight:700}
 .low{color:#fca5a5;font-weight:700}
 .muted{color:#94a3b8;font-size:14px}
-.bankroll{display:flex;align-items:center;gap:10px;margin:16px 0;background:#1e293b;padding:12px;border-radius:12px}
-input{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 10px;width:140px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;background:#1e293b;padding:16px;border-radius:12px;margin:16px 0}
+.control{display:flex;flex-direction:column;gap:6px}
+input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 10px}
 </style>
 </head>
 <body>
@@ -29,17 +30,48 @@ input{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8p
 <h1>Suivi prospectif — Football européen</h1>
 <p><span class="badge">Expérimental — non validé</span></p>
 <p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle. Aucun gain n’est garanti.</p>
-<div class="bankroll">
-  <label for="bankroll"><strong>Cagnotte (€)</strong></label>
-  <input id="bankroll" type="number" min="0" step="1" placeholder="100">
-  <span class="muted">Sauvegardée uniquement dans ce navigateur.</span>
+<div class="controls">
+  <div class="control">
+    <label for="bankroll"><strong>Cagnotte (€)</strong></label>
+    <input id="bankroll" type="number" min="0" step="1" placeholder="100">
+  </div>
+  <div class="control">
+    <label for="minEv"><strong>EV minimum</strong></label>
+    <select id="minEv">
+      <option value="0.03">3 %</option>
+      <option value="0.05">5 %</option>
+      <option value="0.10">10 %</option>
+      <option value="0.15">15 %</option>
+    </select>
+  </div>
+  <div class="control">
+    <label for="maxOdds"><strong>Cote maximale</strong></label>
+    <select id="maxOdds">
+      <option value="2">2.00</option>
+      <option value="3">3.00</option>
+      <option value="3.8" selected>3.80</option>
+      <option value="5">5.00</option>
+    </select>
+  </div>
+  <div class="control">
+    <label for="minProbability"><strong>Probabilité minimale</strong></label>
+    <select id="minProbability">
+      <option value="0.55">55 %</option>
+      <option value="0.6">60 %</option>
+      <option value="0.65">65 %</option>
+      <option value="0.7">70 %</option>
+    </select>
+  </div>
+  <div class="control">
+    <label for="comboLegs"><strong>Jambes combiné</strong></label>
+    <select id="comboLegs">
+      <option value="2">2 maximum</option>
+      <option value="3" selected>3 maximum</option>
+    </select>
+  </div>
 </div>
 <h2>À miser — tous championnats confondus</h2>
-<p class="muted">
-  Les paris sont sélectionnés dans les cinq championnats suivis. Les cotes affichées sont les cotes réelles récupérées des bookmakers.
-  Paris simples : cote 1.45–3.80, probabilité ≥ 55 %, EV ≥ 3 %. Double chance : probabilité ≥ 65 % et EV ≥ 3 %, avec une seule meilleure option par match.
-  Combinés : 2-3 sélections indépendantes, probabilité ≥ 25 %, cote ≤ 8.00 et EV ≥ 5 %.
-</p>
+<p class="muted">Les combinés peuvent mélanger paris simples et double chance de différents championnats. Une même rencontre ne peut pas apparaître deux fois dans un combiné.</p>
 <h3>Paris simples</h3>
 <div id="bets">Chargement…</div>
 <h3>Double chance</h3>
@@ -58,20 +90,25 @@ const odds = v => v == null ? '—' : Number(v).toFixed(2);
 const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A'};
 let leagues = [];
 let active = null;
+let data = null;
 let bankroll = Number(localStorage.getItem('bankroll') || 0);
 document.getElementById('bankroll').value = bankroll || '';
-document.getElementById('bankroll').addEventListener('input', event => {
-  bankroll = Math.max(0, Number(event.target.value) || 0);
-  localStorage.setItem('bankroll', bankroll);
-  renderBets(window.currentBets || []);
-  renderDoubleChance(window.currentDoubleChance || []);
-  renderCombos(window.currentCombos || []);
+['bankroll','minEv','maxOdds','minProbability','comboLegs'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderAll);
 });
 const euro = fraction => {
   if (!bankroll || fraction == null || fraction <= 0) return '—';
   return (bankroll * fraction).toLocaleString('fr-FR', {style:'currency', currency:'EUR', maximumFractionDigits:2});
 };
 const confidenceClass = v => v === 'Élevée' ? 'high' : v === 'Moyenne' ? 'medium' : 'low';
+function settings() {
+  return {
+    minEv: Number(document.getElementById('minEv').value),
+    maxOdds: Number(document.getElementById('maxOdds').value),
+    minProbability: Number(document.getElementById('minProbability').value),
+    comboLegs: Number(document.getElementById('comboLegs').value),
+  };
+}
 function render() {
   const league = leagues.find(l => l.competition === active);
   document.getElementById('forecasts').innerHTML = league && league.forecasts.length ?
@@ -79,30 +116,42 @@ function render() {
     league.forecasts.map(f => `<tr><td>${f.home_team} — ${f.away_team}</td><td>${new Date(f.kickoff_at).toLocaleString('fr-FR')}</td><td>${pct(f.home_probability)}</td><td>${pct(f.draw_probability)}</td><td>${pct(f.away_probability)}</td></tr>`).join('') + '</table>' :
     '<p>Aucune prédiction disponible pour ce championnat.</p>';
 }
-function renderBets(bets) {
-  window.currentBets = bets;
-  document.getElementById('bets').innerHTML = bets.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
-    bets.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun pari simple ne passe actuellement les critères de qualité.</p>';
+function renderBets() {
+  const s = settings();
+  const rows = (data?.bets || []).filter(b => b.expected_value >= s.minEv && b.odds <= s.maxOdds && b.model_probability >= s.minProbability);
+  document.getElementById('bets').innerHTML = rows.length ?
+    `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
+    rows.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun pari simple ne correspond aux filtres actuels.</p>';
 }
-function renderDoubleChance(rows) {
-  window.currentDoubleChance = rows;
+function renderDoubleChance() {
+  const s = settings();
+  const rows = (data?.double_chance || []).filter(r => r.expected_value >= s.minEv && r.odds <= s.maxOdds && r.model_probability >= Math.max(s.minProbability, 0.65));
   document.getElementById('doubleChance').innerHTML = rows.length ?
-    `<table><tr><th>Championnat</th><th>Match</th><th>Double chance</th><th>Probabilité modèle</th><th>Cote réelle</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
+    `<table><tr><th>Championnat</th><th>Match</th><th>Double chance</th><th>Probabilité</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
     rows.map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td>${odds(r.odds)}</td><td class="positive">+${(r.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${euro(r.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucune double chance ne passe actuellement les critères : probabilité modèle d’au moins 65 % et valeur attendue d’au moins 3 %.</p>';
+    '<p>Aucune double chance ne correspond aux filtres actuels.</p>';
 }
-function renderCombos(combos) {
-  window.currentCombos = combos;
-  document.getElementById('combos').innerHTML = combos.length ?
-    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise conseillée</th></tr>` +
-    combos.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(c.confidence)}">${c.confidence}</td><td>${euro(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun combiné ne passe actuellement les critères de qualité.</p>';
+function renderCombos() {
+  const s = settings();
+  const rows = (data?.combos || []).filter(c => c.legs.length <= s.comboLegs && c.expected_value >= s.minEv && c.combined_odds <= s.maxOdds && c.model_probability >= s.minProbability);
+  document.getElementById('combos').innerHTML = rows.length ?
+    `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
+    rows.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(c.confidence)}">${c.confidence}</td><td>${euro(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
+    '<p>Aucun combiné ne correspond aux filtres actuels.</p>';
 }
-fetch('/api/forecasts').then(r => r.json()).then(data => {
-  if (!data.ok) throw new Error(data.error);
-  leagues = data.leagues || [];
+function renderAll() {
+  bankroll = Math.max(0, Number(document.getElementById('bankroll').value) || 0);
+  localStorage.setItem('bankroll', bankroll);
+  render();
+  renderBets();
+  renderDoubleChance();
+  renderCombos();
+}
+fetch('/api/forecasts').then(r => r.json()).then(response => {
+  if (!response.ok) throw new Error(response.error);
+  data = response;
+  leagues = response.leagues || [];
   document.getElementById('tabs').innerHTML = leagues.map(l =>
     `<button class="tab" data-league="${l.competition}">${labels[l.competition] || l.competition} (${l.forecasts.length})</button>`).join('');
   document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
@@ -112,12 +161,9 @@ fetch('/api/forecasts').then(r => r.json()).then(data => {
   }));
   active = leagues[0]?.competition;
   if (active) document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');
-  render();
-  renderBets(data.bets || []);
-  renderDoubleChance(data.double_chance || []);
-  renderCombos(data.combos || []);
-  document.getElementById('results').innerHTML = data.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
-    data.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
+  renderAll();
+  document.getElementById('results').innerHTML = response.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
+    response.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
 }).catch(error => {
   document.getElementById('forecasts').innerHTML = `<p class="error">Impossible de charger les données.</p>`;
 });
