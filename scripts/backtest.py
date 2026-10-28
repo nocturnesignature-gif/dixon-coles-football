@@ -1,9 +1,4 @@
-"""Walk-forward evaluation of the Dixon-Coles model across all leagues.
-
-The script trains only on matches strictly before each evaluation date,
-refits periodically to keep runtime manageable, and reports global and
-per-league calibration and discrimination metrics.
-"""
+"""Optimized walk-forward evaluation of the Dixon-Coles model."""
 
 import json
 import sys
@@ -27,7 +22,8 @@ LEAGUE_FILES = [
     "data/raw/bundesliga.csv",
     "data/raw/ligue_1.csv",
 ]
-REFIT_EVERY = 50
+REFIT_EVERY = 250
+TRAINING_WINDOW = 2000
 MIN_TRAINING_MATCHES = 200
 
 
@@ -40,9 +36,6 @@ def load_matches() -> list[dict]:
         df = pd.read_csv(path)
         df = df.dropna(subset=["HomeTeam", "AwayTeam", "FTHG", "FTAG", "Date"])
         df["MatchDate"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-        invalid = df["MatchDate"].isna().sum()
-        if invalid:
-            print(f"Skipping {invalid} rows with invalid dates in {path}")
         df = df.dropna(subset=["MatchDate"])
         for row in df.itertuples(index=False):
             matches.append({
@@ -58,7 +51,7 @@ def load_matches() -> list[dict]:
     return matches
 
 
-def actual_outcome(match: dict) -> str:
+def actual_outcome(match):
     if match["home_goals"] > match["away_goals"]:
         return "home"
     if match["home_goals"] == match["away_goals"]:
@@ -66,7 +59,7 @@ def actual_outcome(match: dict) -> str:
     return "away"
 
 
-def metrics(rows: list[dict]) -> dict:
+def metrics(rows):
     if not rows:
         return {"matches": 0}
     probs = np.array([[r["p_home"], r["p_draw"], r["p_away"]] for r in rows])
@@ -77,19 +70,15 @@ def metrics(rows: list[dict]) -> dict:
         for r in rows
     ])
     chosen = probs.argmax(axis=1)
-    correct = chosen == outcomes.argmax(axis=1)
     return {
         "matches": len(rows),
-        "accuracy": float(correct.mean()),
+        "accuracy": float((chosen == outcomes.argmax(axis=1)).mean()),
         "log_loss": float(-np.mean(np.sum(outcomes * np.log(np.clip(probs, 1e-12, 1)), axis=1))),
         "brier_score": float(np.mean(np.sum((probs - outcomes) ** 2, axis=1))),
-        "home_pick_rate": float((chosen == 0).mean()),
-        "draw_pick_rate": float((chosen == 1).mean()),
-        "away_pick_rate": float((chosen == 2).mean()),
     }
 
 
-def calibration(rows: list[dict]) -> list[dict]:
+def calibration(rows):
     buckets = []
     for low, high in [(0, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.65), (0.65, 1.01)]:
         bucket = [r for r in rows if low <= r["top_probability"] < high]
@@ -104,7 +93,7 @@ def calibration(rows: list[dict]) -> list[dict]:
     return buckets
 
 
-def main() -> None:
+def main():
     matches = load_matches()
     if len(matches) <= MIN_TRAINING_MATCHES:
         raise ValueError(f"Need more than {MIN_TRAINING_MATCHES} matches; loaded {len(matches)}")
@@ -117,9 +106,10 @@ def main() -> None:
         if index < MIN_TRAINING_MATCHES:
             continue
         if last_fit_size < 0 or index - MIN_TRAINING_MATCHES >= last_fit_size + REFIT_EVERY:
-            training = matches[:index]
+            training = matches[max(0, index - TRAINING_WINDOW):index]
             model.fit([m.copy() for m in training])
             last_fit_size = index
+            print(f"Refit at prediction {index} using {len(training)} matches")
 
         try:
             forecast = model.predict(match["home"], match["away"])
@@ -158,8 +148,9 @@ def main() -> None:
 
     report = {
         "generated_at": datetime.now().isoformat() + "Z",
-        "method": "Walk-forward; model trained only on prior matches",
+        "method": "Walk-forward; rolling 2000-match training window",
         "refit_every_matches": REFIT_EVERY,
+        "training_window": TRAINING_WINDOW,
         "minimum_training_matches": MIN_TRAINING_MATCHES,
         "global": metrics(predictions),
         "calibration": calibration(predictions),

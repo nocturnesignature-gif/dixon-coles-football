@@ -12,6 +12,8 @@ RESULTS_VIEW = "football_model_prospective_results_v4"
 MIN_ODDS = 1.45
 MAX_COMBO_LEGS = 3
 MAX_COMBOS = 10
+MAX_KELLY_FRACTION = 0.01
+MAX_DAILY_EXPOSURE_FRACTION = 0.05
 
 PROFILES = {
     "prudent": {
@@ -88,7 +90,7 @@ def supabase_get(path: str):
 def kelly_fraction(expected_value, odds):
     if odds <= 1 or expected_value <= 0:
         return 0
-    return min(0.02, 0.25 * expected_value / (odds - 1))
+    return min(MAX_KELLY_FRACTION, 0.25 * expected_value / (odds - 1))
 
 
 def confidence(probability):
@@ -279,6 +281,11 @@ def forecasts():
                 key: {"label": value["label"], **value} for key, value in PROFILES.items()
             },
             "filters": profile,
+            "risk_controls": {
+                "maximum_kelly_fraction": MAX_KELLY_FRACTION,
+                "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION,
+                "note": "Ne jamais dépasser 5 % d’exposition totale sur une même journée.",
+            },
             "leagues": leagues,
             "bets": bets,
             "double_chance": double_chance,
