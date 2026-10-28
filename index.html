@@ -27,7 +27,6 @@ td{font-size:14px}
 .muted{color:#94a3b8;font-size:13px;line-height:1.5}
 .controls{display:grid;grid-template-columns:1fr;gap:10px;background:#1e293b;padding:12px;border-radius:12px;margin:16px 0}
 @media(min-width:640px){.controls{grid-template-columns:repeat(2,1fr);padding:16px}}
-@media(min-width:960px){.controls{grid-template-columns:repeat(5,1fr)}}
 .control{display:flex;flex-direction:column;gap:6px}
 label{font-size:13px;font-weight:600}
 input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:10px;font-size:16px}
@@ -40,44 +39,19 @@ input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #33415
 <p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle. Aucun gain n’est garanti.</p>
 <div class="controls">
   <div class="control">
+    <label for="profile">Stratégie gérée par l’API</label>
+    <select id="profile">
+      <option value="prudent">Prudent — sécurité et probabilité élevée</option>
+      <option value="balanced" selected>Équilibré — probabilité et valeur</option>
+      <option value="value">Valeur — EV prioritaire</option>
+    </select>
+  </div>
+  <div class="control">
     <label for="bankroll">Cagnotte (€)</label>
     <input id="bankroll" type="number" inputmode="decimal" min="0" step="1" placeholder="100">
   </div>
-  <div class="control">
-    <label for="minEv">EV minimum</label>
-    <select id="minEv">
-      <option value="0.03">3 %</option>
-      <option value="0.05">5 %</option>
-      <option value="0.10">10 %</option>
-      <option value="0.15">15 %</option>
-    </select>
-  </div>
-  <div class="control">
-    <label for="maxOdds">Cote maximale</label>
-    <select id="maxOdds">
-      <option value="2">2.00</option>
-      <option value="3">3.00</option>
-      <option value="3.8" selected>3.80</option>
-      <option value="5">5.00</option>
-    </select>
-  </div>
-  <div class="control">
-    <label for="minProbability">Probabilité minimale</label>
-    <select id="minProbability">
-      <option value="0.55">55 %</option>
-      <option value="0.6">60 %</option>
-      <option value="0.65">65 %</option>
-      <option value="0.7">70 %</option>
-    </select>
-  </div>
-  <div class="control">
-    <label for="comboLegs">Jambes combiné</label>
-    <select id="comboLegs">
-      <option value="2">2 maximum</option>
-      <option value="3" selected>3 maximum</option>
-    </select>
-  </div>
 </div>
+<p class="muted" id="profileSummary">L’API applique automatiquement les seuils de la stratégie choisie : EV, cote, probabilité et nombre de jambes.</p>
 <h2>À miser — tous championnats confondus</h2>
 <p class="muted">Les combinés peuvent mélanger paris simples et double chance de différents championnats. Une même rencontre ne peut pas apparaître deux fois dans un combiné.</p>
 <h3>Paris simples</h3>
@@ -101,21 +75,19 @@ let active = null;
 let data = null;
 let bankroll = Number(localStorage.getItem('bankroll') || 0);
 document.getElementById('bankroll').value = bankroll || '';
-['bankroll','minEv','maxOdds','minProbability','comboLegs'].forEach(id => {
-  document.getElementById(id).addEventListener('input', renderAll);
-});
+document.getElementById('profile').addEventListener('change', load);
+document.getElementById('bankroll').addEventListener('input', renderMoney);
 const euro = fraction => {
   if (!bankroll || fraction == null || fraction <= 0) return '—';
   return (bankroll * fraction).toLocaleString('fr-FR', {style:'currency', currency:'EUR', maximumFractionDigits:2});
 };
 const confidenceClass = v => v === 'Élevée' ? 'high' : v === 'Moyenne' ? 'medium' : 'low';
-function settings() {
-  return {
-    minEv: Number(document.getElementById('minEv').value),
-    maxOdds: Number(document.getElementById('maxOdds').value),
-    minProbability: Number(document.getElementById('minProbability').value),
-    comboLegs: Number(document.getElementById('comboLegs').value),
-  };
+function renderMoney() {
+  bankroll = Math.max(0, Number(document.getElementById('bankroll').value) || 0);
+  localStorage.setItem('bankroll', bankroll);
+  renderBets();
+  renderDoubleChance();
+  renderCombos();
 }
 function render() {
   const league = leagues.find(l => l.competition === active);
@@ -125,56 +97,60 @@ function render() {
     '<p>Aucune prédiction disponible pour ce championnat.</p>';
 }
 function renderBets() {
-  const s = settings();
-  const rows = (data?.bets || []).filter(b => b.expected_value >= s.minEv && b.odds <= s.maxOdds && b.model_probability >= s.minProbability);
+  const rows = data?.bets || [];
   document.getElementById('bets').innerHTML = rows.length ?
     `<table><tr><th>Championnat</th><th>Match</th><th>Paris</th><th>Modèle</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
     rows.map(b => `<tr><td>${labels[b.competition] || b.competition}</td><td>${b.home_team} — ${b.away_team}</td><td>${b.outcome}</td><td>${pct(b.model_probability)}</td><td>${odds(b.odds)}</td><td class="positive">+${(b.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(b.confidence)}">${b.confidence}</td><td>${euro(b.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun pari simple ne correspond aux filtres actuels.</p>';
+    '<p>Aucun pari simple validé par la stratégie actuelle.</p>';
 }
 function renderDoubleChance() {
-  const s = settings();
-  const rows = (data?.double_chance || []).filter(r => r.expected_value >= s.minEv && r.odds <= s.maxOdds && r.model_probability >= Math.max(s.minProbability, 0.65));
+  const rows = data?.double_chance || [];
   document.getElementById('doubleChance').innerHTML = rows.length ?
     `<table><tr><th>Championnat</th><th>Match</th><th>Double chance</th><th>Probabilité</th><th>Cote</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
     rows.map(r => `<tr><td>${labels[r.competition] || r.competition}</td><td>${r.home_team} — ${r.away_team}</td><td>${r.market} — ${r.outcome}</td><td>${pct(r.model_probability)}</td><td>${odds(r.odds)}</td><td class="positive">+${(r.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(r.confidence)}">${r.confidence}</td><td>${euro(r.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucune double chance ne correspond aux filtres actuels.</p>';
+    '<p>Aucune double chance validée par la stratégie actuelle.</p>';
 }
 function renderCombos() {
-  const s = settings();
-  const rows = (data?.combos || []).filter(c => c.legs.length <= s.comboLegs && c.expected_value >= s.minEv && c.combined_odds <= s.maxOdds && c.model_probability >= s.minProbability);
+  const rows = data?.combos || [];
   document.getElementById('combos').innerHTML = rows.length ?
     `<table><tr><th>Sélections</th><th>Cote combinée</th><th>Probabilité</th><th>Valeur</th><th>Confiance</th><th>Mise</th></tr>` +
     rows.map(c => `<tr><td>${c.legs.map(l => `${l.match} — ${l.outcome} @ ${odds(l.odds)}`).join('<br>')}</td><td>${odds(c.combined_odds)}</td><td>${pct(c.model_probability)}</td><td class="positive">+${(c.expected_value * 100).toFixed(1)}%</td><td class="${confidenceClass(c.confidence)}">${c.confidence}</td><td>${euro(c.suggested_stake_fraction)}</td></tr>`).join('') + '</table>' :
-    '<p>Aucun combiné ne correspond aux filtres actuels.</p>';
+    '<p>Aucun combiné validé par la stratégie actuelle.</p>';
 }
-function renderAll() {
-  bankroll = Math.max(0, Number(document.getElementById('bankroll').value) || 0);
-  localStorage.setItem('bankroll', bankroll);
-  render();
-  renderBets();
-  renderDoubleChance();
-  renderCombos();
+function renderProfile() {
+  const f = data?.filters;
+  if (!f) return;
+  document.getElementById('profileSummary').textContent =
+    `Stratégie ${data.profile_label} : EV ≥ ${(f.minimum_expected_value * 100).toFixed(0)} %, cote ≤ ${Number(f.maximum_odds).toFixed(2)}, probabilité simple ≥ ${(f.minimum_single_probability * 100).toFixed(0)} %, combinés ≤ ${f.maximum_combo_legs} jambes.`;
 }
-fetch('/api/forecasts').then(r => r.json()).then(response => {
-  if (!response.ok) throw new Error(response.error);
-  data = response;
-  leagues = response.leagues || [];
-  document.getElementById('tabs').innerHTML = leagues.map(l =>
-    `<button class="tab" data-league="${l.competition}">${labels[l.competition] || l.competition} (${l.forecasts.length})</button>`).join('');
-  document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
-    active = button.dataset.league;
-    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.league === active));
+function load() {
+  const profile = document.getElementById('profile').value;
+  document.getElementById('bets').innerHTML = 'Chargement…';
+  document.getElementById('doubleChance').innerHTML = 'Chargement…';
+  document.getElementById('combos').innerHTML = 'Chargement…';
+  fetch(`/api/forecasts?profile=${encodeURIComponent(profile)}`).then(r => r.json()).then(response => {
+    if (!response.ok) throw new Error(response.error);
+    data = response;
+    leagues = response.leagues || [];
+    document.getElementById('tabs').innerHTML = leagues.map(l =>
+      `<button class="tab" data-league="${l.competition}">${labels[l.competition] || l.competition} (${l.forecasts.length})</button>`).join('');
+    document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
+      active = button.dataset.league;
+      document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.league === active));
+      render();
+    }));
+    active = leagues[0]?.competition;
+    if (active) document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');
     render();
-  }));
-  active = leagues[0]?.competition;
-  if (active) document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');
-  renderAll();
-  document.getElementById('results').innerHTML = response.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
-    response.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
-}).catch(error => {
-  document.getElementById('forecasts').innerHTML = `<p class="error">Impossible de charger les données.</p>`;
-});
+    renderMoney();
+    renderProfile();
+    document.getElementById('results').innerHTML = response.results.length ? `<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Choix correct</th><th>Log loss</th><th>Brier</th></tr>` +
+      response.results.map(r => `<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${r.top_pick_correct ? 'oui' : 'non'}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('') + '</table>' : '<p>Aucun résultat final disponible.</p>';
+  }).catch(error => {
+    document.getElementById('bets').innerHTML = `<p class="error">Impossible de charger les sélections.</p>`;
+  });
+}
+load();
 </script>
 </body>
 </html>

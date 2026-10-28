@@ -3,23 +3,54 @@ import os
 import urllib.request
 import urllib.error
 from itertools import combinations
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 RESULTS_VIEW = "football_model_prospective_results_v4"
-MIN_EDGE = 0.03
 MIN_ODDS = 1.45
-MAX_ODDS = 3.80
-MIN_SINGLE_PROBABILITY = 0.55
-MIN_DOUBLE_CHANCE_PROBABILITY = 0.65
-MIN_DOUBLE_CHANCE_EDGE = 0.03
-MIN_COMBO_PROBABILITY = 0.25
-MIN_COMBO_EDGE = 0.05
-MAX_COMBO_ODDS = 8.00
 MAX_COMBO_LEGS = 3
 MAX_COMBOS = 10
+
+PROFILES = {
+    "prudent": {
+        "label": "Prudent",
+        "minimum_single_probability": 0.65,
+        "minimum_expected_value": 0.03,
+        "maximum_odds": 2.00,
+        "minimum_double_chance_probability": 0.70,
+        "minimum_double_chance_expected_value": 0.02,
+        "minimum_combo_probability": 0.45,
+        "minimum_combo_expected_value": 0.03,
+        "maximum_combo_odds": 3.00,
+        "maximum_combo_legs": 2,
+    },
+    "balanced": {
+        "label": "Équilibré",
+        "minimum_single_probability": 0.55,
+        "minimum_expected_value": 0.05,
+        "maximum_odds": 3.80,
+        "minimum_double_chance_probability": 0.65,
+        "minimum_double_chance_expected_value": 0.03,
+        "minimum_combo_probability": 0.30,
+        "minimum_combo_expected_value": 0.05,
+        "maximum_combo_odds": 5.00,
+        "maximum_combo_legs": 3,
+    },
+    "value": {
+        "label": "Valeur",
+        "minimum_single_probability": 0.45,
+        "minimum_expected_value": 0.10,
+        "maximum_odds": 5.00,
+        "minimum_double_chance_probability": 0.60,
+        "minimum_double_chance_expected_value": 0.05,
+        "minimum_combo_probability": 0.20,
+        "minimum_combo_expected_value": 0.08,
+        "maximum_combo_odds": 8.00,
+        "maximum_combo_legs": 3,
+    },
+}
 
 
 class SupabaseError(Exception):
@@ -68,8 +99,17 @@ def confidence(probability):
     return "Faible"
 
 
+def selection_score(item):
+    return item["expected_value"] * item["model_probability"]
+
+
 @app.get("/api/forecasts")
 def forecasts():
+    profile_key = request.args.get("profile", "balanced").lower()
+    if profile_key not in PROFILES:
+        return jsonify({"ok": False, "error": "invalid_profile", "valid_profiles": list(PROFILES)}), 400
+    profile = PROFILES[profile_key]
+
     try:
         runs = supabase_get(
             "football_model_runs_v4?select=id,model_version,competition,status,created_at"
@@ -113,7 +153,11 @@ def forecasts():
                     continue
                 probability = probabilities[market]
                 expected_value = probability * odd["odds"] - 1
-                if not (MIN_EDGE <= expected_value and MIN_ODDS <= odd["odds"] <= MAX_ODDS and probability >= MIN_SINGLE_PROBABILITY):
+                if not (
+                    expected_value >= profile["minimum_expected_value"]
+                    and MIN_ODDS <= odd["odds"] <= profile["maximum_odds"]
+                    and probability >= profile["minimum_single_probability"]
+                ):
                     continue
                 bets.append({
                     "event_id": event_id,
@@ -143,7 +187,10 @@ def forecasts():
                 if not odd:
                     continue
                 expected_value = probability * odd["odds"] - 1
-                if probability < MIN_DOUBLE_CHANCE_PROBABILITY or expected_value < MIN_DOUBLE_CHANCE_EDGE:
+                if (
+                    probability < profile["minimum_double_chance_probability"]
+                    or expected_value < profile["minimum_double_chance_expected_value"]
+                ):
                     continue
                 candidate = {
                     "event_id": event_id,
@@ -162,18 +209,17 @@ def forecasts():
                     "provider": odd["provider"],
                     "captured_at": odd["captured_at"],
                 }
-                if best_dc is None or candidate["expected_value"] > best_dc["expected_value"]:
+                if best_dc is None or selection_score(candidate) > selection_score(best_dc):
                     best_dc = candidate
             if best_dc:
                 double_chance_by_event[event_id] = best_dc
-        double_chance = sorted(double_chance_by_event.values(), key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
-        bets.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
+        double_chance = sorted(double_chance_by_event.values(), key=selection_score, reverse=True)
+        bets.sort(key=selection_score, reverse=True)
         combo_candidates = bets + double_chance
-        combo_candidates.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
+        combo_candidates.sort(key=selection_score, reverse=True)
         combos = []
-        for size in (2, 3):
-            if size > MAX_COMBO_LEGS:
-                break
+        max_legs = min(profile["maximum_combo_legs"], MAX_COMBO_LEGS)
+        for size in range(2, max_legs + 1):
             for selection in combinations(combo_candidates, size):
                 if len({bet["event_id"] for bet in selection}) != size:
                     continue
@@ -183,7 +229,11 @@ def forecasts():
                     probability *= bet["model_probability"]
                     combined_odds *= bet["odds"]
                 expected_value = probability * combined_odds - 1
-                if probability < MIN_COMBO_PROBABILITY or combined_odds > MAX_COMBO_ODDS or expected_value < MIN_COMBO_EDGE:
+                if (
+                    probability < profile["minimum_combo_probability"]
+                    or combined_odds > profile["maximum_combo_odds"]
+                    or expected_value < profile["minimum_combo_expected_value"]
+                ):
                     continue
                 combos.append({
                     "legs": [
@@ -203,7 +253,7 @@ def forecasts():
                     "confidence": confidence(probability),
                     "suggested_stake_fraction": kelly_fraction(expected_value, combined_odds),
                 })
-        combos.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
+        combos.sort(key=selection_score, reverse=True)
         combos = combos[:MAX_COMBOS]
         leagues = []
         for competition in LEAGUES:
@@ -223,16 +273,12 @@ def forecasts():
         return jsonify({
             "ok": True,
             "status": "experimental_unvalidated",
-            "filters": {
-                "minimum_odds": MIN_ODDS,
-                "maximum_odds": MAX_ODDS,
-                "minimum_single_probability": MIN_SINGLE_PROBABILITY,
-                "minimum_double_chance_probability": MIN_DOUBLE_CHANCE_PROBABILITY,
-                "minimum_double_chance_expected_value": MIN_DOUBLE_CHANCE_EDGE,
-                "minimum_combo_probability": MIN_COMBO_PROBABILITY,
-                "maximum_combo_odds": MAX_COMBO_ODDS,
-                "minimum_combo_expected_value": MIN_COMBO_EDGE,
+            "profile": profile_key,
+            "profile_label": profile["label"],
+            "available_profiles": {
+                key: {"label": value["label"], **value} for key, value in PROFILES.items()
             },
+            "filters": profile,
             "leagues": leagues,
             "bets": bets,
             "double_chance": double_chance,
