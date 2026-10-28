@@ -6,23 +6,31 @@
 <title>Suivi prospectif — Football européen</title>
 <style>
 body{font-family:system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
-main{max-width:1080px;margin:auto;padding:24px}
+main{max-width:1080px;margin:auto;padding:16px}
+@media(min-width:768px){main{padding:24px}}
+h1{font-size:1.5rem;margin:0 0 12px}
+@media(min-width:768px){h1{font-size:2rem}}
 .badge{display:inline-block;background:#7c2d12;color:#fed7aa;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
 .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
-button.tab{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 14px;border-radius:999px;cursor:pointer}
+button.tab{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 12px;border-radius:999px;cursor:pointer;font-size:14px}
 button.tab.active{background:#2563eb;border-color:#2563eb}
-table{width:100%;border-collapse:collapse;margin-top:16px;background:#1e293b;border-radius:12px;overflow:hidden}
-th,td{padding:10px;border-bottom:1px solid #334155;text-align:left}
-th{background:#334155}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;border-radius:12px}
+table{width:100%;min-width:640px;border-collapse:collapse;background:#1e293b;border-radius:12px;overflow:hidden}
+th,td{padding:10px;border-bottom:1px solid #334155;text-align:left;white-space:nowrap}
+th{background:#334155;font-size:13px}
+td{font-size:14px}
 .error{color:#fca5a5}
 .positive{color:#86efac;font-weight:700}
 .high{color:#86efac;font-weight:700}
 .medium{color:#fde68a;font-weight:700}
 .low{color:#fca5a5;font-weight:700}
-.muted{color:#94a3b8;font-size:14px}
-.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;background:#1e293b;padding:16px;border-radius:12px;margin:16px 0}
+.muted{color:#94a3b8;font-size:13px;line-height:1.5}
+.controls{display:grid;grid-template-columns:1fr;gap:10px;background:#1e293b;padding:12px;border-radius:12px;margin:16px 0}
+@media(min-width:640px){.controls{grid-template-columns:repeat(2,1fr);padding:16px}}
+@media(min-width:960px){.controls{grid-template-columns:repeat(5,1fr)}}
 .control{display:flex;flex-direction:column;gap:6px}
-input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 10px}
+label{font-size:13px;font-weight:600}
+input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:10px;font-size:16px}
 </style>
 </head>
 <body>
@@ -32,11 +40,11 @@ input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-ra
 <p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle. Aucun gain n’est garanti.</p>
 <div class="controls">
   <div class="control">
-    <label for="bankroll"><strong>Cagnotte (€)</strong></label>
-    <input id="bankroll" type="number" min="0" step="1" placeholder="100">
+    <label for="bankroll">Cagnotte (€)</label>
+    <input id="bankroll" type="number" inputmode="decimal" min="0" step="1" placeholder="100">
   </div>
   <div class="control">
-    <label for="minEv"><strong>EV minimum</strong></label>
+    <label for="minEv">EV minimum</label>
     <select id="minEv">
       <option value="0.03">3 %</option>
       <option value="0.05">5 %</option>
@@ -45,7 +53,7 @@ input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-ra
     </select>
   </div>
   <div class="control">
-    <label for="maxOdds"><strong>Cote maximale</strong></label>
+    <label for="maxOdds">Cote maximale</label>
     <select id="maxOdds">
       <option value="2">2.00</option>
       <option value="3">3.00</option>
@@ -54,7 +62,7 @@ input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-ra
     </select>
   </div>
   <div class="control">
-    <label for="minProbability"><strong>Probabilité minimale</strong></label>
+    <label for="minProbability">Probabilité minimale</label>
     <select id="minProbability">
       <option value="0.55">55 %</option>
       <option value="0.6">60 %</option>
@@ -63,7 +71,7 @@ input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-ra
     </select>
   </div>
   <div class="control">
-    <label for="comboLegs"><strong>Jambes combiné</strong></label>
+    <label for="comboLegs">Jambes combiné</label>
     <select id="comboLegs">
       <option value="2">2 maximum</option>
       <option value="3" selected>3 maximum</option>
@@ -73,16 +81,16 @@ input,select{background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-ra
 <h2>À miser — tous championnats confondus</h2>
 <p class="muted">Les combinés peuvent mélanger paris simples et double chance de différents championnats. Une même rencontre ne peut pas apparaître deux fois dans un combiné.</p>
 <h3>Paris simples</h3>
-<div id="bets">Chargement…</div>
+<div class="table-wrap" id="bets">Chargement…</div>
 <h3>Double chance</h3>
-<div id="doubleChance">Chargement…</div>
+<div class="table-wrap" id="doubleChance">Chargement…</div>
 <h3>Combinés</h3>
-<div id="combos">Chargement…</div>
+<div class="table-wrap" id="combos">Chargement…</div>
 <h2>Prédictions par championnat</h2>
 <div class="tabs" id="tabs"></div>
-<div id="forecasts">Chargement…</div>
+<div class="table-wrap" id="forecasts">Chargement…</div>
 <h2>Résultats rapprochés</h2>
-<div id="results">Chargement…</div>
+<div class="table-wrap" id="results">Chargement…</div>
 </main>
 <script>
 const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
