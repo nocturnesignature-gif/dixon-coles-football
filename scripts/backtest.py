@@ -1,4 +1,4 @@
-"""Optimized walk-forward evaluation of the Dixon-Coles model."""
+"""Fast walk-forward evaluation of the Dixon-Coles model."""
 
 import json
 import sys
@@ -22,12 +22,12 @@ LEAGUE_FILES = [
     "data/raw/bundesliga.csv",
     "data/raw/ligue_1.csv",
 ]
-REFIT_EVERY = 250
-TRAINING_WINDOW = 2000
+REFIT_EVERY = 500
+TRAINING_WINDOW = 800
 MIN_TRAINING_MATCHES = 200
 
 
-def load_matches() -> list[dict]:
+def load_matches():
     matches = []
     for path in LEAGUE_FILES:
         if not Path(path).exists():
@@ -47,7 +47,7 @@ def load_matches() -> list[dict]:
                 "date": row.MatchDate.date(),
             })
     matches.sort(key=lambda m: m["date"])
-    print(f"Loaded {len(matches)} valid matches")
+    print(f"Loaded {len(matches)} valid matches", flush=True)
     return matches
 
 
@@ -98,7 +98,7 @@ def main():
     if len(matches) <= MIN_TRAINING_MATCHES:
         raise ValueError(f"Need more than {MIN_TRAINING_MATCHES} matches; loaded {len(matches)}")
 
-    model = DixonColesModel(half_life_days=365)
+    model_fit = None
     last_fit_size = -1
     predictions = []
 
@@ -107,12 +107,13 @@ def main():
             continue
         if last_fit_size < 0 or index - MIN_TRAINING_MATCHES >= last_fit_size + REFIT_EVERY:
             training = matches[max(0, index - TRAINING_WINDOW):index]
-            model.fit([m.copy() for m in training])
+            model_fit = DixonColesModel(half_life_days=365)
+            model_fit.fit([m.copy() for m in training])
             last_fit_size = index
-            print(f"Refit at prediction {index} using {len(training)} matches")
+            print(f"Refit {index}: {len(training)} training matches", flush=True)
 
         try:
-            forecast = model.predict(match["home"], match["away"])
+            forecast = model_fit.predict(match["home"], match["away"])
         except KeyError:
             continue
 
@@ -123,7 +124,7 @@ def main():
             "draw": probabilities["draw"],
             "away": probabilities["away_win"],
         }
-        top_outcome = max(picks, key=picks.get)
+        top = max(picks, key=picks.get)
         predictions.append({
             "date": match["date"].isoformat(),
             "league": match["league"],
@@ -133,10 +134,13 @@ def main():
             "p_home": picks["home"],
             "p_draw": picks["draw"],
             "p_away": picks["away"],
-            "top_pick": top_outcome,
-            "top_probability": picks[top_outcome],
-            "top_pick_correct": int(top_outcome == outcome),
+            "top_pick": top,
+            "top_probability": picks[top],
+            "top_pick_correct": int(top == outcome),
         })
+
+        if index % 500 == 0:
+            print(f"Processed {index}/{len(matches)} matches", flush=True)
 
     output = Path("reports")
     output.mkdir(exist_ok=True)
@@ -148,10 +152,9 @@ def main():
 
     report = {
         "generated_at": datetime.now().isoformat() + "Z",
-        "method": "Walk-forward; rolling 2000-match training window",
+        "method": "Fast walk-forward; 800-match rolling training window",
         "refit_every_matches": REFIT_EVERY,
         "training_window": TRAINING_WINDOW,
-        "minimum_training_matches": MIN_TRAINING_MATCHES,
         "global": metrics(predictions),
         "calibration": calibration(predictions),
         "by_league": {league: metrics(rows) for league, rows in sorted(by_league.items())},
@@ -159,8 +162,8 @@ def main():
     with open(output / "backtest_metrics.json", "w", encoding="utf-8") as file:
         json.dump(report, file, indent=2, ensure_ascii=False)
 
-    print(json.dumps(report["global"], indent=2))
-    print(f"Wrote {len(predictions)} predictions to reports/backtest_predictions.csv")
+    print(json.dumps(report["global"], indent=2), flush=True)
+    print(f"Wrote {len(predictions)} predictions", flush=True)
 
 
 if __name__ == "__main__":
