@@ -6,6 +6,7 @@ per-league calibration and discrimination metrics.
 """
 
 import json
+import sys
 import traceback
 from collections import defaultdict
 from datetime import datetime
@@ -13,6 +14,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from src.dixon_coles import DixonColesModel
 
