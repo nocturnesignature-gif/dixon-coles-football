@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-10-28T10:56:24.732719Z",
+  "method": "Fast walk-forward; 800-match rolling training window",
+  "refit_every_matches": 500,
+  "training_window": 800,
+  "global": {
+    "matches": 4853,
+    "accuracy": 0.5075211209561096,
+    "log_loss": 1.0346359117453359,
+    "brier_score": 0.6105820852340671
+  },
+  "calibration": [
+    {
+      "range": "30%-40%",
+      "matches": 677,
+      "mean_predicted_probability": 0.37527568178282805,
+      "observed_hit_rate": 0.33234859675036926
+    },
+    {
+      "range": "40%-50%",
+      "matches": 1376,
+      "mean_predicted_probability": 0.44750303606734926,
+      "observed_hit_rate": 0.438953488372093
+    },
+    {
+      "range": "50%-65%",
+      "matches": 1515,
+      "mean_predicted_probability": 0.569775699435548,
+      "observed_hit_rate": 0.5346534653465347
+    },
+    {
+      "range": "65%-101%",
+      "matches": 1285,
+      "mean_predicted_probability": 0.762513235649661,
+      "observed_hit_rate": 0.6412451361867705
+    }
+  ],
+  "by_league": {
+    "bundesliga": {
+      "matches": 857,
+      "accuracy": 0.5075845974329055,
+      "log_loss": 1.051432034744569,
+      "brier_score": 0.6237404125324755
+    },
+    "la_liga": {
+      "matches": 1045,
+      "accuracy": 0.49473684210526314,
+      "log_loss": 1.0061809425497223,
+      "brier_score": 0.6003423114849288
+    },
+    "ligue_1": {
+      "matches": 837,
+      "accuracy": 0.4862604540023895,
+      "log_loss": 1.0639731539107895,
+      "brier_score": 0.6361383241242103
+    },
+    "premier_league": {
+      "matches": 1049,
+      "accuracy": 0.5290753098188751,
+      "log_loss": 1.0249506946352345,
+      "brier_score": 0.6057960418766994
+    },
+    "serie_a": {
+      "matches": 1065,
+      "accuracy": 0.5154929577464789,
+      "log_loss": 1.0355238802477629,
+      "brier_score": 0.5946702210124167
+    }
+  }
+}
