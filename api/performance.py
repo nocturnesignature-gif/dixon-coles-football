@@ -1,6 +1,7 @@
 """Application performance API: hit rate, ROI, CLV and calibration tracking."""
 
 import json
+import math
 import os
 import urllib.request
 import urllib.error
@@ -8,6 +9,8 @@ from collections import defaultdict
 from flask import Flask, jsonify
 
 app = Flask(__name__)
+
+RESULTS_VIEW = "football_model_prospective_results_v4"
 
 
 class SupabaseError(Exception):
@@ -27,7 +30,7 @@ def supabase_request(path):
         headers={
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
+            "Accept": "application/json",
         },
     )
     try:
@@ -59,6 +62,28 @@ def aggregate(rows):
     }
 
 
+def prediction_metrics(rows):
+    log_losses = []
+    brier_scores = []
+    for row in rows:
+        outcome = row.get("actual_outcome")
+        probs = {
+            "home": row.get("home_probability"),
+            "draw": row.get("draw_probability"),
+            "away": row.get("away_probability"),
+        }
+        if outcome not in probs or any(probs[k] is None for k in probs):
+            continue
+        probs = {k: max(min(float(v), 0.999999), 0.000001) for k, v in probs.items()}
+        log_losses.append(-math.log(probs[outcome]))
+        brier_scores.append(sum((probs[k] - (1 if k == outcome else 0)) ** 2 for k in probs))
+    return {
+        "matches": len(log_losses),
+        "average_log_loss": ratio(sum(log_losses), len(log_losses)),
+        "average_brier_score": ratio(sum(brier_scores), len(brier_scores)),
+    }
+
+
 @app.get("/api/performance")
 def performance():
     try:
@@ -75,21 +100,15 @@ def performance():
             if month:
                 by_month[month].append(bet)
 
-        results = supabase_request(
-            "prediction_results?select=home_probability,draw_probability,away_probability,actual_outcome&order=match_date.desc&limit=1000"
-        )
-        log_losses, brier_scores = [], []
-        for row in results:
-            outcome = row.get("actual_outcome")
-            probs = {
-                "home": float(row.get("home_probability") or 0),
-                "draw": float(row.get("draw_probability") or 0),
-                "away": float(row.get("away_probability") or 0),
-            }
-            if outcome in probs:
-                p = max(min(probs[outcome], 0.999999), 0.000001)
-                log_losses.append(-__import__("math").log(p))
-                brier_scores.append(sum((probs[k] - (1 if k == outcome else 0)) ** 2 for k in probs))
+        try:
+            results = supabase_request(
+                f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome"
+                "&actual_outcome=not.is.null"
+                "&order=kickoff_at.desc&limit=1000"
+            )
+            quality = prediction_metrics(results)
+        except SupabaseError:
+            quality = {"matches": 0, "average_log_loss": None, "average_brier_score": None}
 
         return jsonify({
             "ok": True,
@@ -97,11 +116,7 @@ def performance():
             "by_profile": {k: aggregate(v) for k, v in sorted(by_profile.items())},
             "by_strategy": {k: aggregate(v) for k, v in sorted(by_strategy.items())},
             "by_month": {k: aggregate(v) for k, v in sorted(by_month.items())},
-            "prediction_quality": {
-                "matches": len(results),
-                "average_log_loss": ratio(sum(log_losses), len(log_losses)),
-                "average_brier_score": ratio(sum(brier_scores), len(brier_scores)),
-            },
+            "prediction_quality": quality,
         })
     except SupabaseError as exc:
         return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
