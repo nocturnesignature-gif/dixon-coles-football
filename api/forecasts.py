@@ -22,6 +22,14 @@ MAX_COMBO_LEGS = 3
 MAX_COMBOS = 10
 
 
+class SupabaseError(Exception):
+    def __init__(self, status, url, body):
+        super().__init__(f"Supabase HTTP {status}")
+        self.status = status
+        self.url = url
+        self.body = body
+
+
 def supabase_get(path: str):
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -36,10 +44,14 @@ def supabase_get(path: str):
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        if response.status != 200:
-            raise RuntimeError(f"Supabase returned HTTP {response.status}")
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status != 200:
+                raise SupabaseError(response.status, url, "")
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:500]
+        raise SupabaseError(exc.code, url, body) from exc
 
 
 def kelly_fraction(expected_value, odds):
@@ -79,8 +91,7 @@ def forecasts():
         )
         latest_odds = {}
         for row in odds:
-            key = (row["event_id"], row["market"])
-            latest_odds.setdefault(key, row)
+            latest_odds.setdefault((row["event_id"], row["market"]), row)
         by_version = {}
         bets = []
         double_chance_by_event = {}
@@ -157,12 +168,13 @@ def forecasts():
                 double_chance_by_event[event_id] = best_dc
         double_chance = sorted(double_chance_by_event.values(), key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
         bets.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
+        combo_candidates = bets + double_chance
+        combo_candidates.sort(key=lambda x: x["expected_value"] * x["model_probability"], reverse=True)
         combos = []
-        eligible = [bet for bet in bets if bet["expected_value"] > 0]
         for size in (2, 3):
             if size > MAX_COMBO_LEGS:
                 break
-            for selection in combinations(eligible, size):
+            for selection in combinations(combo_candidates, size):
                 if len({bet["event_id"] for bet in selection}) != size:
                     continue
                 probability = 1
@@ -178,6 +190,7 @@ def forecasts():
                         {
                             "event_id": bet["event_id"],
                             "match": f"{bet['home_team']} — {bet['away_team']}",
+                            "market": bet["market"],
                             "outcome": bet["outcome"],
                             "model_probability": bet["model_probability"],
                             "odds": bet["odds"],
@@ -226,7 +239,7 @@ def forecasts():
             "combos": combos,
             "results": results,
         })
-    except urllib.error.HTTPError as exc:
-        return jsonify({"ok": False, "error": f"upstream_http_{exc.code}"}), 502
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "configuration_or_upstream_error"}), 500
