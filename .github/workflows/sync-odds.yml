@@ -2,18 +2,24 @@ name: Sync live odds
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-odds-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Call odds synchronization endpoint
         env:
           APP_URL: ${{ secrets.APP_URL || 'https://paris-predictions.vercel.app' }}
         run: |
-          response=$(curl -sS --fail --max-time 120 \
+          response=$(curl -sS --fail-with-body --max-time 180 \
             -w '\n%{http_code}' \
             "$APP_URL/api/sync-odds")
           echo "$response"
@@ -22,3 +28,4 @@ jobs:
             echo "Odds synchronization failed with HTTP $status"
             exit 1
           fi
+          echo "$response" | head -n -1 | python3 -c 'import json,sys; data=json.load(sys.stdin); sys.exit(0 if data.get("ok") is True else 1)'
