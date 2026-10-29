@@ -28,6 +28,7 @@ REFIT_EVERY = 500
 TRAINING_WINDOW = 800
 MIN_TRAINING_MATCHES = 200
 MODEL_VERSION = "dixon_coles_walkforward_v1"
+MIN_PROBABILITY = 0.000001
 
 
 def load_matches():
@@ -60,6 +61,12 @@ def actual_outcome(match):
     if match["home_goals"] == match["away_goals"]:
         return "draw"
     return "away"
+
+
+def valid_probabilities(probabilities):
+    values = [max(min(float(p), 1.0), MIN_PROBABILITY) for p in probabilities]
+    total = sum(values)
+    return [value / total for value in values]
 
 
 def metrics_for(probabilities, outcome):
@@ -131,7 +138,12 @@ def main():
             "draw": probabilities["draw"],
             "away": probabilities["away_win"],
         }
-        probability_list = [picks["home"], picks["draw"], picks["away"]]
+        home_probability, draw_probability, away_probability = valid_probabilities([
+            picks["home"],
+            picks["draw"],
+            picks["away"],
+        ])
+        probability_list = [home_probability, draw_probability, away_probability]
         log_loss, brier = metrics_for(probability_list, outcome)
 
         row = {
@@ -142,9 +154,9 @@ def main():
             "home_goals": match["home_goals"],
             "away_goals": match["away_goals"],
             "actual_outcome": outcome,
-            "home_probability": picks["home"],
-            "draw_probability": picks["draw"],
-            "away_probability": picks["away"],
+            "home_probability": home_probability,
+            "draw_probability": draw_probability,
+            "away_probability": away_probability,
             "log_loss": log_loss,
             "brier_score": brier,
             "model_version": MODEL_VERSION,
