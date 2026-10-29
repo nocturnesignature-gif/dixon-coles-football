@@ -56,10 +56,11 @@ PROFILES = {
 
 
 class SupabaseError(Exception):
-    def __init__(self, status, body):
-        super().__init__(f"Supabase HTTP {status}")
+    def __init__(self, status, body, path=""):
+        super().__init__(f"Supabase HTTP {status}: {path}")
         self.status = status
         self.body = body
+        self.path = path
 
 
 def supabase_request(path, method="GET", payload=None):
@@ -83,7 +84,7 @@ def supabase_request(path, method="GET", payload=None):
         with urllib.request.urlopen(req, timeout=20) as response:
             return json.load(response)
     except urllib.error.HTTPError as exc:
-        raise SupabaseError(exc.code, exc.read().decode(errors="replace")[:500]) from exc
+        raise SupabaseError(exc.code, exc.read().decode(errors="replace")[:500], path) from exc
 
 
 def parse_datetime(value):
@@ -226,7 +227,7 @@ def forecasts():
         results = supabase_request(f"{RESULTS_VIEW}?select=*&order=kickoff_at.asc")
         return jsonify({"ok": True, "status": "experimental_unvalidated", "profile": profile_key, "profile_label": profile["label"], "calibration": {"method": "per_outcome_logistic" if len(history) >= MIN_HISTORY_FOR_FITTING else "legacy_high_probability_shrinkage", "history_rows": len(history), "maximum_expected_value": MAX_EXPECTED_VALUE, "plausible_probability_range": [MIN_PLAUSIBLE_PROBABILITY, MAX_PLAUSIBLE_PROBABILITY]}, "risk_controls": {"maximum_kelly_fraction": MAX_KELLY_FRACTION, "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION, "maximum_odds_age_hours": MAX_ODDS_AGE_HOURS}, "leagues": leagues, "bets": bets, "double_chance": [], "combos": [], "results": results})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "configuration_or_upstream_error"}), 500
 
@@ -237,7 +238,7 @@ def list_bets():
         bets = supabase_request("bet_history?select=*&order=created_at.desc&limit=200")
         return jsonify({"ok": True, "bets": bets, "summary": aggregate(bets)})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -254,7 +255,7 @@ def create_bet():
         created = supabase_request("bet_history", method="POST", payload=row)
         return jsonify({"ok": True, "bet": created[0] if created else row}), 201
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -277,7 +278,7 @@ def settle_bet(bet_id):
         updated = supabase_request(f"bet_history?id=eq.{bet_id}", method="PATCH", payload={"result": result, "closing_odds": closing_odds, "closing_line_value": clv, "profit": profit, "settled_at": datetime.now(timezone.utc).isoformat()})
         return jsonify({"ok": True, "bet": updated[0] if updated else None})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -301,7 +302,7 @@ def performance():
             quality = {"matches": 0, "average_log_loss": None, "average_brier_score": None}
         return jsonify({"ok": True, "overall": overall, "by_profile": {k: aggregate(v) for k, v in sorted(by_profile.items())}, "by_strategy": {k: aggregate(v) for k, v in sorted(by_strategy.items())}, "by_month": {k: aggregate(v) for k, v in sorted(by_month.items())}, "prediction_quality": quality})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -383,7 +384,7 @@ def capture_closing_odds():
             captured += 1
         return jsonify({"ok": True, "bets_processed": len(pending), "closing_odds_captured": captured})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "closing_odds_capture_failed"}), 500
 
@@ -428,12 +429,12 @@ def diagnostics():
         try:
             verified = supabase_request(f"{RESULTS_VIEW}?select=forecast_id,competition,home_team,away_team,kickoff_at,predicted_at,recorded_at,kickoff_at_snapshot,actual_outcome,home_score,away_score,log_loss,brier_score&order=kickoff_at.desc&limit=200")
         except SupabaseError as exc:
-            verified = {"error": f"supabase_http_{exc.status}", "details": exc.body}
+            verified = {"error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}
         by_competition = defaultdict(int)
         for forecast in future:
             by_competition[forecast["competition"]] += 1
         return jsonify({"ok": True, "now": now.isoformat(), "counts": {"forecasts": len(forecasts), "future": len(future), "past": len(past), "future_by_competition": dict(by_competition), "verified_results": len(verified) if isinstance(verified, list) else 0}, "future_forecasts": future, "verified_results": verified})
     except SupabaseError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "diagnostics_failed"}), 500
