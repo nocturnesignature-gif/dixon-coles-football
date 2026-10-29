@@ -75,8 +75,9 @@ def supabase_upsert(rows):
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not base_url or not service_key:
         raise RuntimeError("missing_supabase_config")
+    url = f"{base_url}/rest/v1/historical_forecasts"
     request = urllib.request.Request(
-        f"{base_url}/rest/v1/historical_forecasts",
+        url,
         method="POST",
         headers={
             "apikey": service_key,
@@ -86,8 +87,16 @@ def supabase_upsert(rows):
         },
         data=json.dumps(rows).encode(),
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:1000]
+        print(f"Supabase upsert failed: HTTP {exc.code}", flush=True)
+        print(f"URL: {url}", flush=True)
+        print(f"Rows in batch: {len(rows)}", flush=True)
+        print(f"Response: {body}", flush=True)
+        raise
 
 
 def main():
