@@ -319,7 +319,7 @@ def sync_odds():
                 prices, provider = extract_prices(odds_event, "h2h")
                 rows = []
                 if prices:
-                    for market_name, outcome_name in (("home", event["home_team"]), ("draw", "Draw"), ("away", event["away_team"])):
+                    for market_name, outcome_name in (("home", odds_event["home_team"]), ("draw", "Draw"), ("away", odds_event["away_team"])):
                         price = prices.get(outcome_name)
                         if price:
                             rows.append({"event_id": event["external_id"], "home_team": event["home_team"], "away_team": event["away_team"], "market": market_name, "odds": price, "provider": provider})
