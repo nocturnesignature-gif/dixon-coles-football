@@ -5,6 +5,7 @@ import math
 import os
 import re
 import unicodedata
+import urllib.parse
 import urllib.request
 import urllib.error
 from collections import defaultdict
@@ -21,7 +22,14 @@ from src.calibration import calibrate_1x2
 app = Flask(__name__)
 
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
-RESULTS_VIEW = "football_model_prospective_results_v4"
+LEAGUE_EVENT_ALIASES = {
+    "ligue_1": ["Ligue 1"],
+    "premier_league": ["Premier League"],
+    "la_liga": ["Primera Division", "LaLiga"],
+    "bundesliga": ["Bundesliga"],
+    "serie_a": ["Serie A"],
+}
+RESULTS_VIEW = "football_prospective_verified_scores_v1"
 MIN_ODDS = 1.45
 MAX_KELLY_FRACTION = 0.01
 MAX_DAILY_EXPOSURE_FRACTION = 0.05
@@ -29,6 +37,7 @@ MAX_EXPECTED_VALUE = 0.15
 MIN_PLAUSIBLE_PROBABILITY = 0.02
 MAX_PLAUSIBLE_PROBABILITY = 0.85
 MIN_HISTORY_FOR_FITTING = 50
+MAX_ODDS_AGE_HOURS = 6
 
 SPORT_KEYS = {
     "Premier League": "soccer_epl",
@@ -75,6 +84,10 @@ def supabase_request(path, method="GET", payload=None):
             return json.load(response)
     except urllib.error.HTTPError as exc:
         raise SupabaseError(exc.code, exc.read().decode(errors="replace")[:500]) from exc
+
+
+def parse_datetime(value):
+    return datetime.fromisoformat((value or "").replace("Z", "+00:00"))
 
 
 def ratio(numerator, denominator):
@@ -142,8 +155,8 @@ def same_match(event, odds_event):
     away_score = len(away & odds_away) / max(1, len(away | odds_away))
     if home_score < 0.5 or away_score < 0.5:
         return False
-    kickoff = datetime.fromisoformat(event["kickoff_at"].replace("Z", "+00:00"))
-    odds_kickoff = datetime.fromisoformat(odds_event["commence_time"].replace("Z", "+00:00"))
+    kickoff = parse_datetime(event["kickoff_at"])
+    odds_kickoff = parse_datetime(odds_event["commence_time"])
     return abs((kickoff - odds_kickoff).total_seconds()) <= 7200
 
 
@@ -155,6 +168,11 @@ def extract_prices(match, market_key):
     if not market:
         return None, None
     return {o["name"]: o["price"] for o in market.get("outcomes", [])}, bookmaker.get("key", "the_odds_api")
+
+
+def fresh_odds(odd, kickoff):
+    captured = parse_datetime(odd.get("captured_at"))
+    return captured <= kickoff and (kickoff - captured).total_seconds() <= MAX_ODDS_AGE_HOURS * 3600
 
 
 @app.get("/api/forecasts")
@@ -175,30 +193,38 @@ def forecasts():
         for row in odds_rows:
             latest_odds.setdefault((row["event_id"], row["market"]), row)
         try:
-            history = supabase_request(f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome&actual_outcome=not.is.null&order=kickoff_at.desc&limit=500")
+            history = supabase_request(f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome&order=kickoff_at.desc&limit=500")
         except SupabaseError:
             history = []
         by_version, bets = {}, []
         for forecast in rows:
             by_version.setdefault(forecast["model_version"], []).append(forecast)
             event_id = forecast.get("external_id")
+            kickoff = parse_datetime(forecast.get("kickoff_at"))
             probabilities = calibrate_1x2(forecast["home_probability"], forecast["draw_probability"], forecast["away_probability"], history)
             forecast.update({"calibrated_home_probability": probabilities["home"], "calibrated_draw_probability": probabilities["draw"], "calibrated_away_probability": probabilities["away"], "quality_flag": "implausible_raw_probabilities" if implausible(forecast) else "ok"})
             if forecast["quality_flag"] != "ok":
                 continue
             for market, outcome in (("home", "Domicile"), ("draw", "Nul"), ("away", "Extérieur")):
                 odd = latest_odds.get((event_id, market))
-                if not odd:
+                if not odd or not fresh_odds(odd, kickoff):
                     continue
                 probability = probabilities[market]
                 expected_value = probability * odd["odds"] - 1
                 if not (expected_value >= profile["minimum_expected_value"] and expected_value <= MAX_EXPECTED_VALUE and MIN_ODDS <= odd["odds"] <= profile["maximum_odds"] and probability >= profile["minimum_single_probability"]):
                     continue
-                bets.append({"event_id": event_id, "competition": forecast["competition"], "home_team": forecast["home_team"], "away_team": forecast["away_team"], "kickoff_at": forecast["kickoff_at"], "market": market, "outcome": outcome, "model_probability": probability, "raw_model_probability": forecast[f"{market}_probability"], "odds": odd["odds"], "expected_value": expected_value, "confidence": confidence(probability), "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]), "provider": odd["provider"], "captured_at": odd["captured_at"]})
+                bets.append({"event_id": event_id, "competition": forecast["competition"], "home_team": forecast["home_team"], "away_team": forecast["away_team"], "kickoff_at": forecast["kickoff_at"], "market": market, "outcome": outcome, "model_probability": probability, "raw_model_probability": forecast[f"{market}_probability"], "odds": odd["odds"], "expected_value": expected_value, "confidence": confidence(probability), "suggested_stake_fraction": kelly_fraction(expected_value, odd["odds"]), "provider": odd["provider"], "captured_at": odd["captured_at"], "odds_age_hours": round((kickoff - parse_datetime(odd["captured_at"])).total_seconds() / 3600, 2)})
         bets.sort(key=lambda b: b["expected_value"] * b["model_probability"], reverse=True)
-        leagues = [{"competition": c, "model": {"id": latest[c]["id"], "version": latest[c]["model_version"], "status": latest[c]["status"]}, "forecasts": by_version.get(latest[c]["model_version"], [])} for c in LEAGUES if c in latest]
+        leagues = []
+        for league in LEAGUES:
+            run = latest.get(league)
+            if not run:
+                continue
+            aliases = LEAGUE_EVENT_ALIASES.get(league, [])
+            league_forecasts = [f for f in by_version.get(run["model_version"], []) if f.get("competition") in aliases]
+            leagues.append({"competition": league, "event_competitions": aliases, "model": {"id": run["id"], "version": run["model_version"], "status": run["status"]}, "forecasts": league_forecasts})
         results = supabase_request(f"{RESULTS_VIEW}?select=*&order=kickoff_at.asc")
-        return jsonify({"ok": True, "status": "experimental_unvalidated", "profile": profile_key, "profile_label": profile["label"], "calibration": {"method": "per_outcome_logistic" if len(history) >= MIN_HISTORY_FOR_FITTING else "legacy_high_probability_shrinkage", "history_rows": len(history), "maximum_expected_value": MAX_EXPECTED_VALUE, "plausible_probability_range": [MIN_PLAUSIBLE_PROBABILITY, MAX_PLAUSIBLE_PROBABILITY]}, "risk_controls": {"maximum_kelly_fraction": MAX_KELLY_FRACTION, "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION}, "leagues": leagues, "bets": bets, "double_chance": [], "combos": [], "results": results})
+        return jsonify({"ok": True, "status": "experimental_unvalidated", "profile": profile_key, "profile_label": profile["label"], "calibration": {"method": "per_outcome_logistic" if len(history) >= MIN_HISTORY_FOR_FITTING else "legacy_high_probability_shrinkage", "history_rows": len(history), "maximum_expected_value": MAX_EXPECTED_VALUE, "plausible_probability_range": [MIN_PLAUSIBLE_PROBABILITY, MAX_PLAUSIBLE_PROBABILITY]}, "risk_controls": {"maximum_kelly_fraction": MAX_KELLY_FRACTION, "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION, "maximum_odds_age_hours": MAX_ODDS_AGE_HOURS}, "leagues": leagues, "bets": bets, "double_chance": [], "combos": [], "results": results})
     except SupabaseError as exc:
         return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
@@ -269,7 +295,7 @@ def performance():
             if month:
                 by_month[month].append(bet)
         try:
-            results = supabase_request(f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome&actual_outcome=not.is.null&order=kickoff_at.desc&limit=1000")
+            results = supabase_request(f"{RESULTS_VIEW}?select=home_probability,draw_probability,away_probability,actual_outcome&order=kickoff_at.desc&limit=1000")
             quality = prediction_metrics(results)
         except SupabaseError:
             quality = {"matches": 0, "average_log_loss": None, "average_brier_score": None}
@@ -292,8 +318,8 @@ def sync_odds():
         all_events = supabase_request("football_events_v4?select=id,external_id,source,active,competition,home_team,away_team,kickoff_at&order=kickoff_at.asc&limit=1000")
         source_events = [e for e in all_events if e.get("source") == "football_data_org"]
         active_events = [e for e in source_events if e.get("active") is True]
-        future_events = [e for e in active_events if datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) > now]
-        events = [e for e in future_events if datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) < horizon]
+        future_events = [e for e in active_events if parse_datetime(e["kickoff_at"]) > now]
+        events = [e for e in future_events if parse_datetime(e["kickoff_at"]) < horizon]
         if debug:
             return jsonify({"ok": True, "counts": {"all": len(all_events), "source": len(source_events), "active": len(active_events), "future": len(future_events), "next_7_days": len(events), "supported_competitions": len([e for e in events if e.get("competition") in SPORT_KEYS])}, "sample_events": [{k: e.get(k) for k in ("source", "active", "competition", "home_team", "away_team", "kickoff_at")} for e in all_events[:5]]})
         saved = matched = 0
@@ -319,10 +345,11 @@ def sync_odds():
                 prices, provider = extract_prices(odds_event, "h2h")
                 rows = []
                 if prices:
+                    captured_at = datetime.now(timezone.utc).isoformat()
                     for market_name, outcome_name in (("home", odds_event["home_team"]), ("draw", "Draw"), ("away", odds_event["away_team"])):
                         price = prices.get(outcome_name)
                         if price:
-                            rows.append({"event_id": event["external_id"], "home_team": event["home_team"], "away_team": event["away_team"], "market": market_name, "odds": price, "provider": provider})
+                            rows.append({"event_id": event["external_id"], "home_team": event["home_team"], "away_team": event["away_team"], "market": market_name, "odds": price, "provider": provider, "captured_at": captured_at})
                 if rows:
                     supabase_request("live_odds", method="POST", payload=rows)
                     saved += len(rows)
@@ -376,11 +403,37 @@ def collect_results():
         if not service_key:
             return jsonify({"ok": False, "error": "missing_service_key"}), 500
         base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-        req = urllib.request.Request(f"{base_url}/functions/v1/football-data-status-ingest-v4", method="POST", headers={"Authorization": f"Bearer {service_key}", "Content-Type": "application/json"}, data=b"{}")
+        req = urllib.request.Request(
+            f"{base_url}/functions/v1/football-data-status-ingest-v4",
+            method="POST",
+            headers={"Authorization": f"Bearer {service_key}", "Content-Type": "application/json"},
+            data=json.dumps({"days": 2, "dry_run": False}).encode(),
+        )
         with urllib.request.urlopen(req, timeout=60) as response:
             body = response.read()
         return app.response_class(body, status=response.status, mimetype="application/json")
     except urllib.error.HTTPError as exc:
-        return jsonify({"ok": False, "error": f"upstream_http_{exc.code}"}), 502
+        return jsonify({"ok": False, "error": f"upstream_http_{exc.code}", "details": exc.read().decode(errors="replace")[:500]}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "collection_failed"}), 500
+
+
+@app.get("/api/diagnostics")
+def diagnostics():
+    try:
+        now = datetime.now(timezone.utc)
+        forecasts = supabase_request("football_experimental_forecasts_v4?select=external_id,competition,home_team,away_team,kickoff_at,predicted_at,home_probability,draw_probability,away_probability,eligibility,model_version&order=kickoff_at.asc&limit=200")
+        future = [f for f in forecasts if parse_datetime(f["kickoff_at"]) > now]
+        past = [f for f in forecasts if parse_datetime(f["kickoff_at"]) <= now]
+        try:
+            verified = supabase_request(f"{RESULTS_VIEW}?select=forecast_id,competition,home_team,away_team,kickoff_at,predicted_at,recorded_at,kickoff_at_snapshot,actual_outcome,home_score,away_score,log_loss,brier_score&order=kickoff_at.desc&limit=200")
+        except SupabaseError as exc:
+            verified = {"error": f"supabase_http_{exc.status}", "details": exc.body}
+        by_competition = defaultdict(int)
+        for forecast in future:
+            by_competition[forecast["competition"]] += 1
+        return jsonify({"ok": True, "now": now.isoformat(), "counts": {"forecasts": len(forecasts), "future": len(future), "past": len(past), "future_by_competition": dict(by_competition), "verified_results": len(verified) if isinstance(verified, list) else 0}, "future_forecasts": future, "verified_results": verified})
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}", "details": exc.body}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "diagnostics_failed"}), 500
