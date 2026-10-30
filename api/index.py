@@ -1,1 +1,1 @@
-PATCH: Replace the ntfy notification title "Récapitulatif quotidien — Football européen" with ASCII-only "Recapitulatif quotidien - Football europeen" to avoid latin-1 encoding failure.
+RESTORE_FULL_INDEX_PY_WITH_ASCII_NTFY_TITLE
