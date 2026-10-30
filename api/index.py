@@ -176,6 +176,24 @@ def fresh_odds(odd, kickoff):
     return captured <= kickoff and (kickoff - captured).total_seconds() <= MAX_ODDS_AGE_HOURS * 3600
 
 
+@app.get("/api/generate-forecasts")
+def generate_forecasts():
+    token = os.environ.get("SUPABASE_FORECAST_TOKEN", "")
+    base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    if not token or not base_url:
+        return jsonify({"ok": False, "error": "missing_forecast_config"}), 500
+    try:
+        url = f"{base_url}/functions/v1/football-model-prospective-multi-league-v1?token={urllib.parse.quote(token)}"
+        req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as response:
+            body = response.read()
+        return app.response_class(body, status=response.status, mimetype="application/json")
+    except urllib.error.HTTPError as exc:
+        return jsonify({"ok": False, "error": f"upstream_http_{exc.code}", "details": exc.read().decode(errors="replace")[:500]}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "forecast_generation_failed"}), 500
+
+
 @app.get("/api/forecasts")
 def forecasts():
     profile_key = request.args.get("profile", "balanced").lower()
