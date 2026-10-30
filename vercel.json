@@ -1,11 +1,1 @@
-{
-  "crons": [
-    {"path": "/api/generate-forecasts", "schedule": "0 6 * * *"},
-    {"path": "/api/collect-results", "schedule": "0 23 * * *"},
-    {"path": "/api/sync-odds", "schedule": "0 9 * * *"},
-    {"path": "/api/check-alerts", "schedule": "0 12 * * *"}
-  ],
-  "rewrites": [
-    {"source": "/api/(.*)", "destination": "/api/index"}
-  ]
-}
+PATCH: Add daily 07:00 UTC cron for /api/daily-recap.
