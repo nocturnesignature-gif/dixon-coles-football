@@ -1,1 +1,1 @@
-PATCH: Add /api/daily-recap route that compiles protected forecasts, today's matches, yesterday's verified results, odds freshness and cumulative quality, then sends a notification to the ntfy topic configured in NTFY_TOPIC. Add daily 07:00 UTC cron for /api/daily-recap in vercel.json.
+RESTORE_FULL_INDEX_PY_WITH_DAILY_RECAP
