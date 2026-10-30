@@ -468,14 +468,6 @@ def capture_closing_odds():
         return jsonify({"ok": False, "error": "closing_odds_capture_failed"}), 500
 
 
-@app.get("/api/check-alerts")
-def check_alerts():
-    try:
-        return jsonify({"ok": True, "alerts_sent": 0, "reason": "alerts_temporarily_disabled_during_calibration"})
-    except Exception:
-        return jsonify({"ok": False, "error": "alert_check_failed"}), 500
-
-
 @app.get("/api/collect-results")
 def collect_results():
     try:
