@@ -102,7 +102,7 @@ input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #33415
 <script>
 const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
 const odds = v => v == null ? '—' : Number(v).toFixed(2);
-const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A'};
+const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A',championship:'Championship',eredivisie:'Eredivisie',primeira_liga:'Primeira Liga'};
 let leagues = [], active = null, data = null;
 let bankroll = Number(localStorage.getItem('bankroll') || 0);
 document.getElementById('bankroll').value = bankroll || '';

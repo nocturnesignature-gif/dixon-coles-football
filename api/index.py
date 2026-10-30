@@ -23,13 +23,16 @@ from src.analytics import lot1_bp
 app = Flask(__name__)
 app.register_blueprint(lot1_bp)
 
-LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
+LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a", "championship", "eredivisie", "primeira_liga"]
 LEAGUE_EVENT_ALIASES = {
     "ligue_1": ["Ligue 1"],
     "premier_league": ["Premier League"],
     "la_liga": ["Primera Division", "LaLiga"],
     "bundesliga": ["Bundesliga"],
     "serie_a": ["Serie A"],
+    "championship": ["Championship"],
+    "eredivisie": ["Eredivisie"],
+    "primeira_liga": ["Primeira Liga"],
 }
 RESULTS_VIEW = "football_prospective_verified_scores_v1"
 MIN_ODDS = 1.45
@@ -48,6 +51,9 @@ SPORT_KEYS = {
     "Bundesliga": "soccer_germany_bundesliga",
     "Serie A": "soccer_italy_serie_a",
     "Ligue 1": "soccer_france_ligue_one",
+    "Championship": "soccer_efl_champ",
+    "Eredivisie": "soccer_netherlands_eredivisie",
+    "Primeira Liga": "soccer_portugal_primeira_liga",
 }
 STOP = {"fc", "cf", "ac", "sc", "as", "ss", "calcio", "1901", "de", "du", "des", "the"}
 
