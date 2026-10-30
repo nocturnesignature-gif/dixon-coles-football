@@ -1,13 +1,15 @@
-"""Lot 1 analytics: walk-forward backtesting, market value, xG form and smart alerts."""
+"""Lot 1-3 analytics: backtesting, market value, xG form, alerts, combos, Monte Carlo, live engine and scenarios."""
 
 import json
 import math
 import os
+import random
 import urllib.parse
 import urllib.request
 import urllib.error
 from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import combinations
 
 from flask import Blueprint, jsonify, request
 
@@ -86,6 +88,71 @@ def ntfy_send(title, message, tags="soccer"):
         return response.status
 
 
+def value_opportunities():
+    now = datetime.now(timezone.utc)
+    forecasts = supabase_request(
+        "football_experimental_forecasts_v4?select=external_id,competition,home_team,away_team,kickoff_at,home_probability,draw_probability,away_probability&order=kickoff_at.asc&limit=1000"
+    )
+    future = [f for f in forecasts if parse_dt(f["kickoff_at"]) > now]
+    odds_rows = supabase_request(
+        "live_odds?select=event_id,market,odds,provider,captured_at&order=captured_at.desc&limit=2000"
+    )
+    latest = {}
+    for row in odds_rows:
+        latest.setdefault((row["event_id"], row["market"]), row)
+    opportunities = []
+    for forecast in future:
+        event_id = forecast.get("external_id")
+        market_odds = {k: latest.get((event_id, k)) for k in ("home", "draw", "away")}
+        if any(v is None for v in market_odds.values()):
+            continue
+        market_probs = devig_three_way({k: v["odds"] for k, v in market_odds.items()})
+        if not market_probs:
+            continue
+        for market in ("home", "draw", "away"):
+            odd = market_odds[market]
+            model_probability = float(forecast[f"{market}_probability"])
+            implied_probability = market_probs[market]
+            edge = model_probability - implied_probability
+            expected_value = model_probability * float(odd["odds"]) - 1
+            if expected_value <= 0 or edge <= 0:
+                continue
+            opportunities.append(
+                {
+                    "event_id": event_id,
+                    "competition": forecast["competition"],
+                    "home_team": forecast["home_team"],
+                    "away_team": forecast["away_team"],
+                    "kickoff_at": forecast["kickoff_at"],
+                    "market": market,
+                    "odds": float(odd["odds"]),
+                    "model_probability": model_probability,
+                    "market_probability": implied_probability,
+                    "market_edge": edge,
+                    "expected_value": expected_value,
+                    "confidence": "high" if edge >= 0.05 and expected_value >= 0.10 else "medium" if edge >= 0.03 else "low",
+                    "odds_captured_at": odd["captured_at"],
+                }
+            )
+    opportunities.sort(key=lambda x: x["expected_value"], reverse=True)
+    return opportunities
+
+
+def adjusted_probs(base, minute, home_score, away_score, home_reds, away_reds):
+    p = {k: float(base[k]) for k in ("home", "draw", "away")}
+    t = min(max(minute or 0, 0), 90) / 90
+    diff = (home_score or 0) - (away_score or 0)
+    if diff:
+        sign = 1 if diff > 0 else -1
+        lead = abs(diff)
+        p["home"] *= 1 + sign * 0.8 * t * lead
+        p["away"] *= 1 - sign * 0.5 * t * lead
+    p["home"] *= max(0.2, 1 - 0.25 * t * (home_reds or 0))
+    p["away"] *= max(0.2, 1 - 0.25 * t * (away_reds or 0))
+    total = sum(p.values()) or 1
+    return {k: v / total for k, v in p.items()}
+
+
 @lot1_bp.get("/api/backtest")
 def backtest():
     try:
@@ -95,16 +162,11 @@ def backtest():
         groups = defaultdict(list)
         for row in rows:
             outcome = row.get("actual_outcome")
-            probs = {
-                "home": row.get("home_probability"),
-                "draw": row.get("draw_probability"),
-                "away": row.get("away_probability"),
-            }
+            probs = {"home": row.get("home_probability"), "draw": row.get("draw_probability"), "away": row.get("away_probability")}
             if outcome not in probs or any(probs[k] is None for k in probs):
                 continue
             kickoff = parse_dt(row["kickoff_at"])
             groups[(row["competition"], kickoff.strftime("%Y-%m"))].append(row)
-
         saved = []
         for (competition, month), matches in groups.items():
             log_losses, brier_scores, correct = [], [], 0
@@ -149,53 +211,7 @@ def backtest():
 @lot1_bp.get("/api/market-value")
 def market_value():
     try:
-        now = datetime.now(timezone.utc)
-        forecasts = supabase_request(
-            "football_experimental_forecasts_v4?select=external_id,competition,home_team,away_team,kickoff_at,home_probability,draw_probability,away_probability,protected_forecast&order=kickoff_at.asc&limit=1000"
-        )
-        future = [f for f in forecasts if parse_dt(f["kickoff_at"]) > now]
-        odds_rows = supabase_request(
-            "live_odds?select=event_id,market,odds,provider,captured_at&order=captured_at.desc&limit=2000"
-        )
-        latest = {}
-        for row in odds_rows:
-            latest.setdefault((row["event_id"], row["market"]), row)
-
-        opportunities = []
-        for forecast in future:
-            event_id = forecast.get("external_id")
-            market_odds = {k: latest.get((event_id, k)) for k in ("home", "draw", "away")}
-            if any(v is None for v in market_odds.values()):
-                continue
-            market_probs = devig_three_way({k: v["odds"] for k, v in market_odds.items()})
-            if not market_probs:
-                continue
-            for market in ("home", "draw", "away"):
-                odd = market_odds[market]
-                model_probability = float(forecast[f"{market}_probability"])
-                implied_probability = market_probs[market]
-                edge = model_probability - implied_probability
-                expected_value = model_probability * float(odd["odds"]) - 1
-                if expected_value <= 0 or edge <= 0:
-                    continue
-                opportunities.append(
-                    {
-                        "event_id": event_id,
-                        "competition": forecast["competition"],
-                        "home_team": forecast["home_team"],
-                        "away_team": forecast["away_team"],
-                        "kickoff_at": forecast["kickoff_at"],
-                        "market": market,
-                        "odds": float(odd["odds"]),
-                        "model_probability": model_probability,
-                        "market_probability": implied_probability,
-                        "market_edge": edge,
-                        "expected_value": expected_value,
-                        "confidence": "high" if edge >= 0.05 and expected_value >= 0.10 else "medium" if edge >= 0.03 else "low",
-                        "odds_captured_at": odd["captured_at"],
-                    }
-                )
-        opportunities.sort(key=lambda x: x["expected_value"], reverse=True)
+        opportunities = value_opportunities()
         return jsonify({"ok": True, "opportunities": opportunities[:50], "count": len(opportunities)})
     except SupabaseError as exc:
         return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
@@ -285,7 +301,6 @@ def check_alerts():
         latest = {}
         for row in odds_rows:
             latest.setdefault((row["event_id"], row["market"]), row)
-
         candidates = []
         for forecast in future:
             event_id = forecast.get("external_id")
@@ -317,7 +332,6 @@ def check_alerts():
                             "confidence": "high" if edge >= 0.05 else "medium",
                         }
                     )
-
         sent = []
         for item in candidates:
             alert_key = f"{item['event_id']}:{item['market']}:{item['odds']}"
@@ -361,3 +375,165 @@ def check_alerts():
         return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
     except (RuntimeError, urllib.error.URLError) as exc:
         return jsonify({"ok": False, "error": "alert_check_failed", "details": str(exc)}), 500
+
+
+@lot1_bp.get("/api/combo-recommendations")
+def combo_recommendations():
+    try:
+        opportunities = [o for o in value_opportunities() if o["confidence"] in ("high", "medium")]
+        by_event = defaultdict(list)
+        for opportunity in opportunities:
+            by_event[opportunity["event_id"]].append(opportunity)
+        legs_pool = [max(legs, key=lambda x: x["expected_value"]) for legs in by_event.values()]
+        legs_pool.sort(key=lambda x: x["expected_value"], reverse=True)
+        combos = []
+        for size in (2, 3):
+            for legs in combinations(legs_pool[:12], size):
+                events = {leg["event_id"] for leg in legs}
+                if len(events) != size:
+                    continue
+                combined_probability = math.prod(leg["model_probability"] for leg in legs)
+                combined_odds = math.prod(leg["odds"] for leg in legs)
+                expected_value = combined_probability * combined_odds - 1
+                if expected_value < 0.03:
+                    continue
+                competitions = {leg["competition"] for leg in legs}
+                combos.append(
+                    {
+                        "legs": legs,
+                        "leg_count": size,
+                        "combined_odds": combined_odds,
+                        "combined_probability": combined_probability,
+                        "expected_value": expected_value,
+                        "risk_level": "low" if len(competitions) == size else "medium",
+                        "competitions": sorted(competitions),
+                    }
+                )
+        combos.sort(key=lambda x: x["expected_value"], reverse=True)
+        return jsonify({"ok": True, "combos": combos[:10], "count": len(combos)})
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "combo_failed", "details": str(exc)}), 500
+
+
+@lot1_bp.get("/api/monte-carlo")
+def monte_carlo():
+    try:
+        opportunities = [o for o in value_opportunities() if o["expected_value"] > 0][:20]
+        if not opportunities:
+            return jsonify({"ok": True, "simulations": 0, "summary": None, "message": "Aucune opportunité disponible pour simuler une série."})
+        random.seed(42)
+        simulations = 1000
+        results = []
+        for _ in range(simulations):
+            profit = 0
+            for opportunity in opportunities:
+                won = random.random() < opportunity["model_probability"]
+                profit += opportunity["odds"] - 1 if won else -1
+            results.append(profit)
+        results.sort()
+        profits = [r for r in results if r > 0]
+        summary = {
+            "bets_per_series": len(opportunities),
+            "simulations": simulations,
+            "average_profit": sum(results) / simulations,
+            "median_profit": results[simulations // 2],
+            "worst_5_percent": results[int(simulations * 0.05)],
+            "best_5_percent": results[int(simulations * 0.95) - 1],
+            "probability_of_loss": (simulations - len(profits)) / simulations,
+            "probability_of_profit": len(profits) / simulations,
+        }
+        return jsonify({"ok": True, "summary": summary, "opportunities_used": len(opportunities)})
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "monte_carlo_failed", "details": str(exc)}), 500
+
+
+@lot1_bp.get("/api/live-matches")
+def live_matches():
+    try:
+        events = supabase_request(
+            "live_match_events?select=event_id,competition,home_team,away_team,kickoff_at,minute,home_score,away_score,home_red_cards,away_red_cards,captured_at&order=captured_at.desc&limit=500"
+        )
+        latest = {}
+        for event in events:
+            latest.setdefault(event["event_id"], event)
+        forecasts = supabase_request(
+            "football_experimental_forecasts_v4?select=external_id,competition,home_team,away_team,kickoff_at,home_probability,draw_probability,away_probability&order=kickoff_at.asc&limit=1000"
+        )
+        by_event = {f["external_id"]: f for f in forecasts}
+        live = []
+        for event_id, event in latest.items():
+            forecast = by_event.get(event_id)
+            if not forecast:
+                continue
+            base = {
+                "home": forecast["home_probability"],
+                "draw": forecast["draw_probability"],
+                "away": forecast["away_probability"],
+            }
+            probabilities = adjusted_probs(
+                base,
+                event.get("minute"),
+                event.get("home_score"),
+                event.get("away_score"),
+                event.get("home_red_cards"),
+                event.get("away_red_cards"),
+            )
+            live.append(
+                {
+                    "event_id": event_id,
+                    "competition": event["competition"],
+                    "home_team": event["home_team"],
+                    "away_team": event["away_team"],
+                    "kickoff_at": event["kickoff_at"],
+                    "minute": event.get("minute"),
+                    "score": f"{event.get('home_score', 0)}-{event.get('away_score', 0)}",
+                    "red_cards": f"{event.get('home_red_cards', 0)}-{event.get('away_red_cards', 0)}",
+                    "live_probabilities": probabilities,
+                    "base_probabilities": base,
+                    "captured_at": event["captured_at"],
+                }
+            )
+        return jsonify({"ok": True, "live_matches": live, "count": len(live)})
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "live_matches_failed", "details": str(exc)}), 500
+
+
+@lot1_bp.get("/api/match-scenarios")
+def match_scenarios():
+    event_id = request.args.get("event_id", "").strip()
+    if not event_id:
+        return jsonify({"ok": False, "error": "missing_event_id"}), 400
+    try:
+        forecasts = supabase_request(
+            f"football_experimental_forecasts_v4?select=external_id,competition,home_team,away_team,kickoff_at,home_probability,draw_probability,away_probability&external_id=eq.{urllib.parse.quote(event_id)}&limit=1"
+        )
+        if not forecasts:
+            return jsonify({"ok": False, "error": "forecast_not_found"}), 404
+        forecast = forecasts[0]
+        base = {
+            "home": forecast["home_probability"],
+            "draw": forecast["draw_probability"],
+            "away": forecast["away_probability"],
+        }
+        events = supabase_request(
+            f"live_match_events?select=minute,home_score,away_score,home_red_cards,away_red_cards&event_id=eq.{urllib.parse.quote(event_id)}&order=captured_at.desc&limit=1"
+        )
+        current = events[0] if events else {"minute": 0, "home_score": 0, "away_score": 0, "home_red_cards": 0, "away_red_cards": 0}
+        scenarios = {
+            "current": adjusted_probs(base, current.get("minute"), current.get("home_score"), current.get("away_score"), current.get("home_red_cards"), current.get("away_red_cards")),
+            "home_leads_1_0_at_30": adjusted_probs(base, 30, 1, 0, current.get("home_red_cards"), current.get("away_red_cards")),
+            "scoreless_at_60": adjusted_probs(base, 60, 0, 0, current.get("home_red_cards"), current.get("away_red_cards")),
+            "home_red_card_at_60": adjusted_probs(base, 60, current.get("home_score"), current.get("away_score"), 1, current.get("away_red_cards")),
+            "away_red_card_at_60": adjusted_probs(base, 60, current.get("home_score"), current.get("away_score"), current.get("home_red_cards"), 1),
+        }
+        return jsonify({"ok": True, "event_id": event_id, "match": f"{forecast['home_team']} - {forecast['away_team']}", "scenarios": scenarios})
+    except SupabaseError as exc:
+        return jsonify({"ok": False, "error": f"supabase_http_{exc.status}:{exc.path}", "details": exc.body}), 502
+    except (RuntimeError, urllib.error.URLError) as exc:
+        return jsonify({"ok": False, "error": "scenarios_failed", "details": str(exc)}), 500
