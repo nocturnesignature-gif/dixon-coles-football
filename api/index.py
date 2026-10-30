@@ -1,1 +1,1 @@
-PATCH: In /api/daily-recap, add a final `except Exception as exc:` block returning JSON with error type and message, so failures no longer produce an unhandled HTML 500.
+RESTORE_FULL_INDEX_PY_WITH_BROAD_DAILY_RECAP_EXCEPTION
