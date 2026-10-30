@@ -18,8 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.calibration import calibrate_1x2
+from src.analytics import lot1_bp
 
 app = Flask(__name__)
+app.register_blueprint(lot1_bp)
 
 LEAGUES = ["ligue_1", "premier_league", "la_liga", "bundesliga", "serie_a"]
 LEAGUE_EVENT_ALIASES = {
