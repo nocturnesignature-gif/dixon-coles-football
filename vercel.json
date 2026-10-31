@@ -7,6 +7,7 @@
     {"path": "/api/check-alerts", "schedule": "0 12 * * *"}
   ],
   "rewrites": [
+    {"source": "/api/prediction-quality", "destination": "/api/quality"},
     {"source": "/api/(.*)", "destination": "/api/index"}
   ]
 }
