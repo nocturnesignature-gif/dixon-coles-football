@@ -8,6 +8,7 @@
   ],
   "rewrites": [
     {"source": "/api/prediction-quality", "destination": "/api/quality"},
+    {"source": "/api/forecasts", "destination": "/api/forecasts"},
     {"source": "/api/(.*)", "destination": "/api/index"}
   ]
 }
