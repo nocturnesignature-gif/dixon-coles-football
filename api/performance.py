@@ -50,8 +50,8 @@ def no_store(response):
 def performance():
     try:
         bets = supabase("bet_history?select=*&order=created_at.desc&limit=1000")
-        counts = supabase("football_quality_counts_v1?select=*")
-        quality_counts = counts[0] if counts else {}
+        summary = supabase("football_quality_summary_v1?scope=eq.overall&select=*")
+        quality = summary[0] if summary else {}
         overall = aggregate(bets)
         by_profile = defaultdict(list)
         by_strategy = defaultdict(list)
@@ -69,11 +69,11 @@ def performance():
             "by_strategy": {k: aggregate(v) for k, v in sorted(by_strategy.items())},
             "by_month": {k: aggregate(v) for k, v in sorted(by_month.items())},
             "prediction_quality": {
-                "matches": quality_counts.get("distinct_matches", 0),
-                "average_log_loss": quality_counts.get("log_loss"),
-                "average_brier_score": quality_counts.get("brier_score"),
-                "evaluated_forecasts": quality_counts.get("evaluated_forecasts", 0),
-                "model_versions": quality_counts.get("model_versions", 0),
+                "matches": quality.get("distinct_matches", 0),
+                "average_log_loss": quality.get("log_loss"),
+                "average_brier_score": quality.get("brier_score"),
+                "evaluated_forecasts": quality.get("evaluated_forecasts", 0),
+                "model_versions": quality.get("model_versions", 0),
                 "deduplication": "earliest_recorded_pre_kickoff_forecast_v1",
             },
             "limitations": [
