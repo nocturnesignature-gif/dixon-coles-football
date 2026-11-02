@@ -12,6 +12,9 @@
     {"source": "/api/market-value", "destination": "/api/market-value"},
     {"source": "/api/combo-recommendations", "destination": "/api/combo-recommendations"},
     {"source": "/api/performance", "destination": "/api/performance"},
+    {"source": "/api/clv-analytics", "destination": "/api/clv-analytics"},
+    {"source": "/api/market-movement", "destination": "/api/market-movement"},
+    {"source": "/api/monte-carlo", "destination": "/api/monte-carlo"},
     {"source": "/api/(.*)", "destination": "/api/index"}
   ]
 }
