@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Maturity — Terminal d’analyse</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#05070c;--panel:#0b1018;--panel-2:#101725;--line:#1d2736;--text:#dbe4ef;--muted:#7d8b9e;--green:#22e39a;--amber:#ffb44d;--red:#ff5470;--blue:#4d8dff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 75% -10%,#0d1a2c 0,var(--bg) 55%);color:var(--text);font:14px/1.45 Inter,system-ui,sans-serif}.shell{max-width:1400px;margin:auto;padding:28px 22px 60px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:22px}h1{margin:0;font-size:26px;letter-spacing:-.5px}.tag{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.16em}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.kpi{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:16px}.kpi span{color:var(--muted);display:block;font-size:11px;text-transform:uppercase;letter-spacing:.1em}.kpi strong{display:block;font-size:26px;margin-top:7px;font-family:ui-monospace,monospace}.panel{background:linear-gradient(180deg,var(--panel),#080d15);border:1px solid var(--line);border-radius:14px;padding:18px}.panel h2{color:var(--muted);font-size:13px;margin:0 0 14px;text-transform:uppercase;letter-spacing:.14em}.chart{height:340px}.table{width:100%;border-collapse:collapse;margin-top:16px;font-family:ui-monospace,monospace;font-size:12px}.table th{color:var(--muted);font-weight:500;padding:10px 8px;text-align:left;border-bottom:1px solid var(--line)}.table td{padding:10px 8px;border-bottom:1px solid #131b28}.ready{color:var(--green)}.pending{color:var(--amber)}.bar{height:7px;background:#131b28;border-radius:99px;overflow:hidden;margin-top:7px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#4d8dff,#22e39a)}.notice{border-left:3px solid var(--amber);background:#181206;color:#ffd9a1;padding:11px 13px;border-radius:8px;font-size:12px;margin-top:16px}@media(max-width:800px){.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header><div><div class="tag">Football Analytics Terminal</div><h1>Data Maturity</h1></div><div class="tag">Coverage · Completeness · Readiness</div></header>
+<section class="kpis">
+<div class="kpi"><span>Couples complets</span><strong id="complete">—</strong></div>
+<div class="kpi"><span>Sélections suivies</span><strong id="selections">—</strong></div>
+<div class="kpi"><span>Taux de complétion</span><strong id="completion">—</strong></div>
+<div class="kpi"><span>Championnats prêts</span><strong id="ready">—</strong></div>
+</section>
+<section class="panel"><h2>Progression vers le seuil de backtest financier</h2><div class="chart"><canvas id="chart"></canvas></div></section>
+<section class="panel"><h2>Couverture par championnat</h2><div style="overflow:auto"><table class="table"><thead><tr><th>Championnat</th><th>Couples complets</th><th>Prédiction seule</th><th>Clôture seule</th><th>Complétion</th><th>Bookmakers</th><th>Statut</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<div class="notice">Un couple complet exige une cote à la prédiction et une cote de clôture. Les métriques financières restent désactivées tant que le seuil par championnat n’est pas atteint.</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);let chart;
+async function load(){try{const r=await fetch('/api/data-maturity');const d=await r.json();if(!d.ok)throw new Error(d.error);const o=d.overall;$('complete').textContent=o.complete_pairs;$('selections').textContent=o.total_selections;$('completion').textContent=(o.completion_rate*100).toFixed(1)+'%';$('ready').textContent=o.leagues_ready_for_financial_backtesting;const leagues=d.leagues||[];if(chart)chart.destroy();chart=new Chart($('chart'),{type:'bar',data:{labels:leagues.map(x=>x.league),datasets:[{label:'Couples complets',data:leagues.map(x=>x.complete_pairs),backgroundColor:'#22e39a'},{label:'Seuil requis',data:leagues.map(()=>d.thresholds.minimum_complete_observations_per_league),type:'line',borderColor:'#ffb44d',borderDash:[6,6],pointRadius:0}]},options:{plugins:{legend:{labels:{color:'#dbe4ef'}}},scales:{x:{ticks:{color:'#7d8b9e',maxRotation:45},grid:{color:'#131b28'}},y:{beginAtZero:true,ticks:{color:'#7d8b9e'},grid:{color:'#131b28'}}}}});$('rows').innerHTML=leagues.map(x=>`<tr><td>${x.league}</td><td>${x.complete_pairs}</td><td>${x.prediction_only}</td><td>${x.closing_only}</td><td>${(x.completion_rate*100).toFixed(1)}%<div class="bar"><i style="width:${x.progress_to_threshold*100}%"></i></div></td><td>${x.bookmaker_count}</td><td class="${x.financial_backtesting_enabled?'ready':'pending'}">${x.financial_backtesting_enabled?'PRÊT':'ACCUMULATION'}</td></tr>`).join('')}catch(e){document.body.insertAdjacentHTML('beforeend',`<div class="shell"><div class="notice">Tableau indisponible : ${e.message}</div></div>`)}}
+load();
+</script>
+</body>
+</html>
