@@ -1,0 +1,52 @@
+name: Verify historical odds maturity
+
+on:
+  schedule:
+    - cron: "0 18 4 11 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check data maturity and notify
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://paris-predictions.vercel.app' }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER || 'https://ntfy.sh' }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -euo pipefail
+          response=$(curl -sS --fail-with-body --max-time 60 "$APP_URL/api/data-maturity")
+          echo "$response"
+          python3 - "$response" <<'PY'
+          import json, os, sys, urllib.request
+          from urllib.parse import quote
+
+          data = json.loads(sys.argv[1])
+          overall = data.get("overall", {})
+          complete = overall.get("complete_pairs", 0)
+          selections = overall.get("total_selections", 0)
+          latest = overall.get("latest_capture") or "aucune"
+          ready = overall.get("leagues_ready_for_financial_backtesting", 0)
+          message = (
+              "Vérification historical_match_odds\n\n"
+              f"Paires complètes : {complete}\n"
+              f"Sélections suivies : {selections}\n"
+              f"Ligues au seuil de 100 : {ready}\n"
+              f"Dernière capture : {latest}\n\n"
+              "Analyse uniquement — aucune recommandation de pari."
+          )
+          topic = os.environ["NTFY_TOPIC"]
+          server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+          req = urllib.request.Request(
+              f"{server}/{quote(topic)}",
+              data=message.encode(),
+              headers={"Title": "Vérification des cotes historiques", "Tags": "soccer", "Priority": "default"},
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              print(f"NTFY status: {response.status}")
+          PY
