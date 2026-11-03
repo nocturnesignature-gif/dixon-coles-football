@@ -21,6 +21,8 @@ MODULES = {
     '/api/strategies': 'strategies',
     '/api/strategy-lab': 'strategy-lab',
     '/api/data-maturity': 'data-maturity',
+    '/api/sync-odds': 'sync-odds',
+    '/api/capture-closing-odds': 'capture-closing-odds',
 }
 
 @lru_cache(maxsize=None)
