@@ -12,10 +12,14 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 SPORT_KEYS = {
     "Premier League": "soccer_epl",
+    "EPL": "soccer_epl",
     "Primera Division": "soccer_spain_la_liga",
+    "La Liga - Spain": "soccer_spain_la_liga",
     "Bundesliga": "soccer_germany_bundesliga",
+    "Bundesliga - Germany": "soccer_germany_bundesliga",
     "Serie A": "soccer_italy_serie_a",
     "Ligue 1": "soccer_france_ligue_one",
+    "Ligue 1 - France": "soccer_france_ligue_one",
 }
 STOP = {"fc", "cf", "ac", "sc", "as", "ss", "calcio", "1901", "de", "du", "des", "the"}
 
@@ -69,7 +73,7 @@ def sync_odds():
                 with urllib.request.urlopen(f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds?{params}", timeout=25) as response:
                     odds_events = json.load(response)
             except urllib.error.HTTPError as exc:
-                return jsonify({"ok": False, "error": f"odds_api_http_{exc.code}", "details": exc.read().decode(errors="replace")[:300]}), 502
+                return jsonify({"ok": False, "error": f"odds_api_http_{exc.code}", "sport_key": sport_key, "details": exc.read().decode(errors="replace")[:300]}), 502
             for odds_event in odds_events:
                 if not same_match(event, odds_event):
                     continue
