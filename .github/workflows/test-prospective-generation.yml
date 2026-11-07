@@ -1,0 +1,60 @@
+name: Test prospective generation (dry run)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: prospective-dry-run
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call authenticated dry run without writes
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, sys, urllib.request, urllib.error
+          headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+          cron, sync = os.environ.get('CRON_SECRET'), os.environ.get('SYNC_SECRET')
+          if cron:
+              headers['Authorization'] = 'Bearer ' + cron
+          elif sync:
+              headers['x-sync-secret'] = sync
+          else:
+              sys.exit('Missing GitHub secret: configure CRON_SECRET or SYNC_SECRET to match Vercel. Do not paste secrets into logs.')
+          req = urllib.request.Request('https://paris-predictions.vercel.app/api/generate-forecasts', method='POST', headers=headers, data=json.dumps({'persist': False}).encode())
+          try:
+              with urllib.request.urlopen(req, timeout=150) as response:
+                  data = json.load(response)
+          except urllib.error.HTTPError as exc:
+              known = {'unauthorized', 'missing_prospective_config', 'invalid_model_configuration', 'explicit_model_configuration_required', 'prospective_upstream_http_401', 'prospective_upstream_http_400', 'prospective_upstream_http_503', 'prospective_upstream_http_502', 'prospective_upstream_unavailable'}
+              try:
+                  code = json.loads(exc.read()).get('error')
+              except (ValueError, AttributeError):
+                  code = None
+              sys.exit('HTTP ' + str(exc.code) + ': ' + (code if code in known else 'endpoint_failed; check server configuration and logs'))
+          except (urllib.error.URLError, TimeoutError, ValueError):
+              sys.exit('Endpoint unavailable or invalid JSON response')
+          if not isinstance(data, dict) or data.get('mode') != 'dry_run' or data.get('created') != 0:
+              sys.exit('Unexpected contract: dry_run mode with zero created rows required')
+          reports = data.get('reports', [])
+          reasons = collections.Counter(r.get('reason', 'candidate_calculated') for r in reports)
+          calculated = [r for r in reports if 'probabilities' in r]
+          import math
+          for row in calculated:
+              p = row['probabilities']
+              if len(p) != 3 or not all(isinstance(v, (float, int)) and math.isfinite(v) and 0 < v < 1 for v in p) or abs(sum(p)-1) > 1e-6:
+                  sys.exit('Invalid probability vector')
+          summary = {'mode':'dry_run','created':data.get('created'),'failed':data.get('failed'),'events_reported':len(reports),'calculated':len(calculated),'with_odds_snapshot':sum(bool(r.get('has_odds_snapshot')) for r in calculated),'reasons':dict(reasons)}
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Prospective dry run\n```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n')
+          if not data.get('ok') or data.get('failed'):
+              sys.exit('Generator reported failures')
+          if not calculated:
+              sys.exit('No candidate calculated: inspect exclusion reasons; generation not validated')
+          PY
