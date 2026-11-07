@@ -1,166 +1,103 @@
-"""Read-only CLV analytics based on historical opening and closing odds."""
+"""Read-only price-pair analytics, separate from forecast evidence."""
 import json
 import os
-import urllib.error
+import math
 import urllib.request
-from collections import defaultdict
-from datetime import datetime
+from collections import defaultdict, Counter
+from datetime import datetime, timezone
 from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-
-def supabase(path):
-    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+def read_all(table, select):
+    base = os.environ.get('SUPABASE_URL', '').rstrip('/')
+    key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')
     if not base or not key:
-        raise RuntimeError("missing_supabase_config")
-    req = urllib.request.Request(
-        f"{base}/rest/v1/{path}",
-        headers={"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as response:
-        return json.load(response)
+        raise RuntimeError('missing_supabase_config')
+    rows = []
+    offset = 0
+    while True:
+        req = urllib.request.Request(f'{base}/rest/v1/{table}?select={select}&order=id.asc&offset={offset}&limit=500', headers={'apikey': key, 'Authorization': f'Bearer {key}'})
+        with urllib.request.urlopen(req, timeout=30) as response:
+            page = json.load(response)
+        rows.extend(page)
+        if not page:
+            return rows
+        offset += len(page)
 
-
-def parse_timestamp(value):
+def stamp(value):
     if not value:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        raise ValueError('missing_timestamp')
+    result = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if result.tzinfo is None:
+        raise ValueError('timezone_required')
+    return result
 
+def summarize(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row['competition']].append(row)
+    return [{'competition': league, 'observations': len(items), 'distinct_matches': len({r['event_id'] for r in items}), 'average_clv': sum(r['clv'] for r in items) / len(items), 'positive_clv_rate': sum(r['clv'] > 0 for r in items) / len(items)} for league, items in sorted(groups.items())]
 
 @app.after_request
 def no_store(response):
-    response.headers["Cache-Control"] = "no-store"
+    response.headers['Cache-Control'] = 'no-store'
     return response
 
-
-@app.get("/api/clv-analytics")
-def clv_analytics():
+@app.get('/api/clv-analytics')
+def analytics():
     try:
-        forecasts = supabase(
-            "football_forecasts_v4?select=id,event_id,model_run_id,predicted_at,features,home_probability,draw_probability,away_probability&eligibility=eq.eligible&order=predicted_at.desc&limit=1000"
-        )
-        events = supabase(
-            "football_events_v4?select=id,external_id,competition,home_team,away_team,kickoff_at&order=kickoff_at.desc&limit=1000"
-        )
-        historical = supabase(
-            "historical_match_odds?select=event_id,market,bookmaker,odds_type,odds,captured_at,kickoff_at&order=captured_at.asc&limit=10000"
-        )
-
-        event_by_id = {event["id"]: event for event in events}
-        odds_by_event = defaultdict(lambda: defaultdict(list))
-        for row in historical:
-            event_id = row.get("event_id")
-            odds_type = row.get("odds_type")
-            market = row.get("market")
-            if event_id and odds_type in {"prediction", "closing"} and market in {"home", "draw", "away"}:
-                odds_by_event[event_id][odds_type].append(row)
-
-        rows = []
-        observations = []
-        for forecast in forecasts:
-            event = event_by_id.get(forecast.get("event_id"))
-            if not event:
+        history = read_all('historical_match_odds', '*')
+        events = read_all('football_events_v4', 'id,external_id')
+        forecasts = read_all('football_forecasts_v4', 'id,event_id,eligibility,predicted_at,recorded_at,input_cutoff_at')
+        external = {e['id']: e['external_id'] for e in events}
+        by_event = defaultdict(list)
+        for f in forecasts:
+            by_event[external.get(f['event_id'])].append(f)
+        groups = defaultdict(lambda: defaultdict(list))
+        excluded = Counter()
+        for r in history:
+            if not r.get('event_id') or not r.get('bookmaker') or r.get('market') not in ('home', 'draw', 'away') or r.get('odds_type') not in ('prediction', 'closing'):
+                excluded['invalid_identity_or_type'] += 1
                 continue
-            event_id = event.get("external_id")
-            opening = odds_by_event.get(event_id, {}).get("prediction", [])
-            closing = odds_by_event.get(event_id, {}).get("closing", [])
-            if not opening or not closing:
+            groups[(r['event_id'], r['market'], r['bookmaker'])][r['odds_type']].append(r)
+        observations, forecast_rows = [], []
+        now = datetime.now(timezone.utc)
+        for (event, market, bookmaker), kinds in groups.items():
+            if not kinds['prediction'] or not kinds['closing']:
+                excluded['incomplete_pair'] += 1
                 continue
-
-            predicted_at = parse_timestamp(forecast.get("predicted_at"))
-            kickoff = parse_timestamp(event.get("kickoff_at"))
-            eligible_openings = [
-                row for row in opening
-                if predicted_at and parse_timestamp(row.get("captured_at")) <= predicted_at
-            ]
-            eligible_closings = [
-                row for row in closing
-                if kickoff and parse_timestamp(row.get("captured_at")) <= kickoff
-            ]
-            if not eligible_openings or not eligible_closings:
+            try:
+                opening = min(kinds['prediction'], key=lambda r: stamp(r['captured_at']))
+                closing = max(kinds['closing'], key=lambda r: stamp(r['captured_at']))
+                start, end = stamp(opening['captured_at']), stamp(closing['captured_at'])
+                kickoff = stamp(closing['kickoff_at'])
+                before, after = float(opening['odds']), float(closing['odds'])
+                if not (math.isfinite(before) and math.isfinite(after) and before > 1 and after > 1):
+                    raise ValueError('invalid_odds')
+                if stamp(opening['kickoff_at']) != kickoff or not start < end <= kickoff or end > now:
+                    raise ValueError('invalid_pair_chronology')
+            except (ValueError, TypeError, KeyError):
+                excluded['invalid_pair_values_or_chronology'] += 1
                 continue
-
-            opening_by_market = {}
-            for row in eligible_openings:
-                opening_by_market[row["market"]] = row
-            closing_by_market = {}
-            for row in eligible_closings:
-                closing_by_market[row["market"]] = row
-
-            market_clvs = {}
-            for market in ("home", "draw", "away"):
-                taken = opening_by_market.get(market)
-                closed = closing_by_market.get(market)
-                if not taken or not closed:
-                    continue
-                taken_odds = float(taken["odds"])
-                closed_odds = float(closed["odds"])
-                if closed_odds <= 1:
-                    continue
-                clv = taken_odds / closed_odds - 1
-                market_clvs[market] = {
-                    "prediction_odds": taken_odds,
-                    "closing_odds": closed_odds,
-                    "clv": clv,
-                    "bookmaker": taken.get("bookmaker"),
-                    "prediction_captured_at": taken.get("captured_at"),
-                    "closing_captured_at": closed.get("captured_at"),
-                }
-                observations.append({
-                    "event_id": event_id,
-                    "competition": event.get("competition"),
-                    "home_team": event.get("home_team"),
-                    "away_team": event.get("away_team"),
-                    "kickoff_at": event.get("kickoff_at"),
-                    "market": market,
-                    **market_clvs[market],
-                })
-
-            if market_clvs:
-                rows.append({
-                    "event_id": event_id,
-                    "competition": event.get("competition"),
-                    "home_team": event.get("home_team"),
-                    "away_team": event.get("away_team"),
-                    "kickoff_at": event.get("kickoff_at"),
-                    "predicted_at": forecast.get("predicted_at"),
-                    "markets": market_clvs,
-                })
-
-        by_competition = defaultdict(list)
-        for observation in observations:
-            by_competition[observation["competition"]].append(observation["clv"])
-
-        summary = []
-        for competition, clvs in sorted(by_competition.items()):
-            summary.append({
-                "competition": competition,
-                "observations": len(clvs),
-                "average_clv": sum(clvs) / len(clvs) if clvs else None,
-                "positive_clv_rate": sum(clv > 0 for clv in clvs) / len(clvs) if clvs else None,
-            })
-
-        return jsonify({
-            "ok": True,
-            "status": "analysis_only",
-            "rows": rows,
-            "observations": observations,
-            "summary": summary,
-            "limitations": [
-                "CLV compares the captured prediction odds with the available closing odds.",
-                "CLV is an analytical measure and does not validate a model.",
-                "No betting selection, stake, or accumulator is generated.",
-            ],
-        })
-    except RuntimeError:
-        return jsonify({"ok": False, "error": "missing_supabase_config"}), 500
-    except urllib.error.HTTPError as exc:
-        return jsonify({"ok": False, "error": f"supabase_http_{exc.code}"}), 502
-    except (urllib.error.URLError, TimeoutError, ValueError):
-        return jsonify({"ok": False, "error": "supabase_unavailable"}), 502
-
-
-if __name__ == "__main__":
-    app.run()
+            row = {'event_id': event, 'competition': opening.get('league') or 'unknown', 'home_team': opening.get('home_team'), 'away_team': opening.get('away_team'), 'market': market, 'bookmaker': bookmaker, 'prediction_odds': before, 'closing_odds': after, 'clv': before / after - 1, 'prediction_captured_at': opening['captured_at'], 'closing_captured_at': closing['captured_at'], 'kickoff_at': closing['kickoff_at'], 'closing_verified': False}
+            observations.append(row)
+            candidates = []
+            for f in by_event.get(event, []):
+                try:
+                    predicted, recorded, cutoff = stamp(f['predicted_at']), stamp(f['recorded_at']), stamp(f['input_cutoff_at'])
+                    if f['eligibility'] == 'eligible' and start <= predicted <= recorded < kickoff and cutoff <= predicted and end >= predicted and (predicted - start).total_seconds() <= 21600:
+                        candidates.append(f)
+                except (ValueError, TypeError, KeyError):
+                    pass
+            if candidates:
+                chosen = min(candidates, key=lambda f: stamp(f['predicted_at']))
+                forecast_rows.append(dict(row, forecast_id=chosen['id'], predicted_at=chosen['predicted_at']))
+            else:
+                excluded['pair_without_compatible_protected_forecast'] += 1
+        return jsonify(ok=True, status='analysis_only', summary=summarize(forecast_rows), historical_summary=summarize(observations), rows=forecast_rows, observations=observations, diagnostics=dict(excluded), historical_pairs=len(observations), forecast_pairs=len(forecast_rows), limitations=['Historical price movement is not model CLV.', 'Closing labels are collector labels, not verified final bookmaker closing prices.', 'Bookmakers are matched exactly; Pinnacle is not assumed.', 'Pairs with identical timestamps are excluded.', 'No model approval or betting recommendation.'])
+    except RuntimeError as exc:
+        return jsonify(ok=False, error=str(exc)), 500
+    except Exception:
+        app.logger.exception('CLV read failed')
+        return jsonify(ok=False, error='clv_source_unavailable'), 502
