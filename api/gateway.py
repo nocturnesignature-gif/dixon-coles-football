@@ -23,6 +23,7 @@ MODULES = {
     '/api/data-maturity': 'data-maturity',
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
+    '/api/generate-forecasts': 'generate-forecasts',
 }
 
 @lru_cache(maxsize=None)
