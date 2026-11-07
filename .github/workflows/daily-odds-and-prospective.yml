@@ -1,0 +1,82 @@
+name: Daily odds sync and prospective generation
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-odds-and-prospective
+  cancel-in-progress: false
+
+jobs:
+  daily-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Sync prospective odds
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+          secret = os.environ.get('SYNC_SECRET')
+          if not secret:
+              sys.exit('Missing GitHub secret SYNC_SECRET')
+          req = urllib.request.Request('https://paris-predictions.vercel.app/api/sync-odds', method='GET', headers={'Accept': 'application/json', 'x-sync-secret': secret})
+          try:
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  result = json.load(response)
+          except urllib.error.HTTPError as exc:
+              try:
+                  payload = json.loads(exc.read())
+                  code = payload.get('error')
+              except (ValueError, AttributeError):
+                  code = None
+              sys.exit('Odds sync failed: HTTP ' + str(exc.code) + (': ' + code if code else ''))
+          except (urllib.error.URLError, TimeoutError, ValueError):
+              sys.exit('Odds sync endpoint unavailable or invalid response')
+          if not result.get('ok'):
+              sys.exit('Odds sync failed: ' + json.dumps(result))
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Odds sync\n```json\n' + json.dumps(result, ensure_ascii=False, indent=2) + '\n```\n')
+          PY
+
+      - name: Generate prospective forecasts
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, sys, urllib.request, urllib.error
+          secret = os.environ.get('SYNC_SECRET')
+          if not secret:
+              sys.exit('Missing GitHub secret SYNC_SECRET')
+          headers = {'Content-Type': 'application/json', 'Accept': 'application/json', 'x-sync-secret': secret}
+          req = urllib.request.Request('https://paris-predictions.vercel.app/api/generate-forecasts', method='POST', headers=headers, data=json.dumps({'persist': True}).encode())
+          try:
+              with urllib.request.urlopen(req, timeout=300) as response:
+                  data = json.load(response)
+          except urllib.error.HTTPError as exc:
+              try:
+                  payload = json.loads(exc.read())
+                  code = payload.get('error')
+              except (ValueError, AttributeError):
+                  code = None
+              sys.exit('Generation failed: HTTP ' + str(exc.code) + (': ' + code if code else ''))
+          except (urllib.error.URLError, TimeoutError, ValueError):
+              sys.exit('Generation endpoint unavailable or invalid response')
+          if not isinstance(data, dict) or data.get('mode') != 'experimental_write':
+              sys.exit('Unexpected generation mode')
+          reports = data.get('reports', [])
+          reasons = collections.Counter(r.get('reason', 'forecast_created') for r in reports)
+          summary = {'mode': data.get('mode'), 'created': data.get('created'), 'failed': data.get('failed'), 'events_reported': len(reports), 'reasons': dict(reasons)}
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Prospective generation\n```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n')
+          if not data.get('ok') or data.get('failed'):
+              sys.exit('Generation reported failures')
+          PY
