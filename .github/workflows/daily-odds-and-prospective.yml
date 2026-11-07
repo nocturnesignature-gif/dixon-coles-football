@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Sync prospective odds
+        id: odds
         env:
           SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
         run: |
@@ -44,9 +45,12 @@ jobs:
           print(json.dumps(result, ensure_ascii=False, indent=2))
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
               output.write('### Odds sync\n```json\n' + json.dumps(result, ensure_ascii=False, indent=2) + '\n```\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('ODDS_SYNC_RESULT=' + json.dumps(result) + '\n')
           PY
 
       - name: Generate prospective forecasts
+        id: generation
         env:
           SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
         run: |
@@ -77,6 +81,48 @@ jobs:
           print(json.dumps(summary, ensure_ascii=False, indent=2))
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
               output.write('### Prospective generation\n```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('GENERATION_RESULT=' + json.dumps(summary) + '\n')
           if not data.get('ok') or data.get('failed'):
               sys.exit('Generation reported failures')
+          PY
+
+      - name: Notify via ntfy
+        if: always()
+        env:
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER || 'https://ntfy.sh' }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          ODDS_SYNC_RESULT: ${{ env.ODDS_SYNC_RESULT }}
+          GENERATION_RESULT: ${{ env.GENERATION_RESULT }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          server = os.environ.get('NTFY_SERVER', 'https://ntfy.sh').rstrip('/')
+          topic = os.environ.get('NTFY_TOPIC', '')
+          if not topic:
+              sys.exit('Missing GitHub secret NTFY_TOPIC')
+          odds = os.environ.get('ODDS_SYNC_RESULT', '')
+          generation = os.environ.get('GENERATION_RESULT', '')
+          status = os.environ.get('JOB_STATUS', 'unknown')
+          try:
+              odds_data = json.loads(odds) if odds else {}
+          except ValueError:
+              odds_data = {}
+          try:
+              generation_data = json.loads(generation) if generation else {}
+          except ValueError:
+              generation_data = {}
+          if status == 'success' and generation_data.get('created') is not None:
+              title = 'Football pipeline: ' + str(generation_data.get('created', 0)) + ' forecasts created'
+              priority = 'default'
+              tags = 'white_check_mark'
+          else:
+              title = 'Football pipeline failed'
+              priority = 'high'
+              tags = 'rotating_light'
+          body = 'Pipeline status: ' + status + '\n\nOdds sync:\n' + (json.dumps(odds_data, ensure_ascii=False, indent=2) if odds_data else 'not completed') + '\n\nGeneration:\n' + (json.dumps(generation_data, ensure_ascii=False, indent=2) if generation_data else 'not completed')
+          req = urllib.request.Request(server + '/' + topic, method='POST', data=body.encode(), headers={'Title': title, 'Priority': priority, 'Tags': tags})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              response.read()
           PY
