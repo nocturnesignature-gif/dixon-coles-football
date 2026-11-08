@@ -212,7 +212,15 @@ def train_new_leagues():
         return jsonify({"ok": False, "error": "missing_training_config"}), 500
     try:
         backfill_url = f"{base_url}/functions/v1/backfill-multi-league-history-v1?token={urllib.parse.quote(token)}"
-        req = urllib.request.Request(backfill_url, method="GET", headers={"Accept": "application/json"})
+req = urllib.request.Request(
+    backfill_url,
+    method="GET",
+    headers={
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    },
+)
         with urllib.request.urlopen(req, timeout=120) as response:
             backfill_status = response.status
             backfill = json.load(response)
