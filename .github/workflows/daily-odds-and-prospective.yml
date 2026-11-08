@@ -15,7 +15,7 @@ concurrency:
 jobs:
   daily-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Sync prospective odds
         id: odds
@@ -87,6 +87,72 @@ jobs:
               sys.exit('Generation reported failures')
           PY
 
+      - name: Capture closing odds
+        id: closing
+        if: always()
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+          secret = os.environ.get('SYNC_SECRET')
+          if not secret:
+              sys.exit('Missing GitHub secret SYNC_SECRET')
+          req = urllib.request.Request('https://paris-predictions.vercel.app/api/capture-closing-odds', method='GET', headers={'Accept': 'application/json', 'x-sync-secret': secret})
+          try:
+              with urllib.request.urlopen(req, timeout=180) as response:
+                  result = json.load(response)
+          except urllib.error.HTTPError as exc:
+              try:
+                  payload = json.loads(exc.read())
+                  code = payload.get('error')
+              except (ValueError, AttributeError):
+                  code = None
+              sys.exit('Closing odds capture failed: HTTP ' + str(exc.code) + (': ' + code if code else ''))
+          except (urllib.error.URLError, TimeoutError, ValueError):
+              sys.exit('Closing odds endpoint unavailable or invalid response')
+          if not result.get('ok'):
+              sys.exit('Closing odds capture failed: ' + json.dumps(result))
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Closing odds\n```json\n' + json.dumps(result, ensure_ascii=False, indent=2) + '\n```\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('CLOSING_ODDS_RESULT=' + json.dumps(result) + '\n')
+          PY
+
+      - name: Send daily recap
+        id: recap
+        if: always()
+        env:
+          SYNC_SECRET: ${{ secrets.SYNC_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+          secret = os.environ.get('SYNC_SECRET')
+          if not secret:
+              sys.exit('Missing GitHub secret SYNC_SECRET')
+          req = urllib.request.Request('https://paris-predictions.vercel.app/api/daily-recap', method='GET', headers={'Accept': 'application/json', 'x-sync-secret': secret})
+          try:
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  result = json.load(response)
+          except urllib.error.HTTPError as exc:
+              try:
+                  payload = json.loads(exc.read())
+                  code = payload.get('error')
+              except (ValueError, AttributeError):
+                  code = None
+              sys.exit('Daily recap failed: HTTP ' + str(exc.code) + (': ' + code if code else ''))
+          except (urllib.error.URLError, TimeoutError, ValueError):
+              sys.exit('Daily recap endpoint unavailable or invalid response')
+          if not result.get('ok'):
+              sys.exit('Daily recap failed: ' + json.dumps(result))
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Daily recap\n```json\n' + json.dumps(result, ensure_ascii=False, indent=2) + '\n```\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('DAILY_RECAP_RESULT=' + json.dumps(result) + '\n')
+          PY
+
       - name: Notify via ntfy
         if: always()
         env:
@@ -94,6 +160,8 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           ODDS_SYNC_RESULT: ${{ env.ODDS_SYNC_RESULT }}
           GENERATION_RESULT: ${{ env.GENERATION_RESULT }}
+          CLOSING_ODDS_RESULT: ${{ env.CLOSING_ODDS_RESULT }}
+          DAILY_RECAP_RESULT: ${{ env.DAILY_RECAP_RESULT }}
           JOB_STATUS: ${{ job.status }}
         run: |
           python3 - <<'PY'
@@ -102,26 +170,25 @@ jobs:
           topic = os.environ.get('NTFY_TOPIC', '')
           if not topic:
               sys.exit('Missing GitHub secret NTFY_TOPIC')
-          odds = os.environ.get('ODDS_SYNC_RESULT', '')
-          generation = os.environ.get('GENERATION_RESULT', '')
+          def parse(value):
+              try:
+                  return json.loads(value) if value else {}
+              except ValueError:
+                  return {}
+          odds = parse(os.environ.get('ODDS_SYNC_RESULT', ''))
+          generation = parse(os.environ.get('GENERATION_RESULT', ''))
+          closing = parse(os.environ.get('CLOSING_ODDS_RESULT', ''))
+          recap = parse(os.environ.get('DAILY_RECAP_RESULT', ''))
           status = os.environ.get('JOB_STATUS', 'unknown')
-          try:
-              odds_data = json.loads(odds) if odds else {}
-          except ValueError:
-              odds_data = {}
-          try:
-              generation_data = json.loads(generation) if generation else {}
-          except ValueError:
-              generation_data = {}
-          if status == 'success' and generation_data.get('created') is not None:
-              title = 'Football pipeline: ' + str(generation_data.get('created', 0)) + ' forecasts created'
+          if status == 'success':
+              title = 'Football pipeline: ' + str(generation.get('created', 0)) + ' forecasts created'
               priority = 'default'
               tags = 'white_check_mark'
           else:
               title = 'Football pipeline failed'
               priority = 'high'
               tags = 'rotating_light'
-          body = 'Pipeline status: ' + status + '\n\nOdds sync:\n' + (json.dumps(odds_data, ensure_ascii=False, indent=2) if odds_data else 'not completed') + '\n\nGeneration:\n' + (json.dumps(generation_data, ensure_ascii=False, indent=2) if generation_data else 'not completed')
+          body = 'Pipeline status: ' + status + '\n\nOdds sync:\n' + json.dumps(odds, ensure_ascii=False, indent=2) + '\n\nGeneration:\n' + json.dumps(generation, ensure_ascii=False, indent=2) + '\n\nClosing odds:\n' + json.dumps(closing, ensure_ascii=False, indent=2) + '\n\nDaily recap:\n' + json.dumps(recap, ensure_ascii=False, indent=2)
           req = urllib.request.Request(server + '/' + topic, method='POST', data=body.encode(), headers={'Title': title, 'Priority': priority, 'Tags': tags})
           with urllib.request.urlopen(req, timeout=30) as response:
               response.read()
