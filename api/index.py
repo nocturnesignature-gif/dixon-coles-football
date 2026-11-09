@@ -302,8 +302,9 @@ def fresh_odds(odd, kickoff):
 def generate_forecasts():
     token = os.environ.get("SUPABASE_FORECAST_TOKEN", "")
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    if not token or not base_url:
+    if not token or not base_url or not service_key:
         return jsonify(
             {"ok": False, "error": "missing_forecast_config"}
         ), 500
@@ -314,16 +315,16 @@ def generate_forecasts():
             f"?token={urllib.parse.quote(token)}"
         )
 
-        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-
         req = urllib.request.Request(
             url,
-            method="GET",
+            method="POST",
             headers={
                 "apikey": service_key,
                 "Authorization": f"Bearer {service_key}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
+            data=json.dumps({}).encode(),
         )
 
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -383,6 +384,7 @@ def train_new_leagues():
             },
             data=json.dumps({}).encode(),
         )
+
         with urllib.request.urlopen(req, timeout=120) as response:
             backfill_status = response.status
             backfill = json.load(response)
@@ -434,12 +436,14 @@ def train_new_leagues():
 
         req = urllib.request.Request(
             forecast_url,
-            method="GET",
+            method="POST",
             headers={
                 "apikey": service_key,
                 "Authorization": f"Bearer {service_key}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
+            data=json.dumps({}).encode(),
         )
 
         with urllib.request.urlopen(req, timeout=120) as response:
