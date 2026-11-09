@@ -345,8 +345,9 @@ def train_new_leagues():
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     token = os.environ.get("SUPABASE_FORECAST_TOKEN", "")
     secret = os.environ.get("SYNC_SECRET", "")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    if not base_url or not token or not secret:
+    if not base_url or not token or not secret or not service_key:
         return jsonify({"ok": False, "error": "missing_training_config"}), 500
 
     try:
@@ -359,10 +360,11 @@ def train_new_leagues():
             backfill_url,
             method="GET",
             headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
                 "Accept": "application/json",
             },
         )
-
         with urllib.request.urlopen(req, timeout=120) as response:
             backfill_status = response.status
             backfill = json.load(response)
