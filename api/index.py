@@ -374,14 +374,15 @@ def train_new_leagues():
 
         req = urllib.request.Request(
             backfill_url,
-            method="GET",
+            method="POST",
             headers={
                 "apikey": service_key,
                 "Authorization": f"Bearer {service_key}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
+            data=json.dumps({}).encode(),
         )
-
         with urllib.request.urlopen(req, timeout=120) as response:
             backfill_status = response.status
             backfill = json.load(response)
