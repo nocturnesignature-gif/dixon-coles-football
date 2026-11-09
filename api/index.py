@@ -314,10 +314,16 @@ def generate_forecasts():
             f"?token={urllib.parse.quote(token)}"
         )
 
+        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
         req = urllib.request.Request(
             url,
             method="GET",
-            headers={"Accept": "application/json"},
+            headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Accept": "application/json",
+            },
         )
 
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -428,7 +434,11 @@ def train_new_leagues():
         req = urllib.request.Request(
             forecast_url,
             method="GET",
-            headers={"Accept": "application/json"},
+            headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Accept": "application/json",
+            },
         )
 
         with urllib.request.urlopen(req, timeout=120) as response:
