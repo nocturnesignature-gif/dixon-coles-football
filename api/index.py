@@ -461,6 +461,7 @@ def train_new_leagues():
             method="POST",
             headers={
                 "x-sync-secret": secret,
+                "Authorization": f"Bearer {service_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
