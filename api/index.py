@@ -170,7 +170,9 @@ def implausible(forecast):
 
 
 def aggregate(rows):
-    settled = [row for row in rows if row.get("result") in ("won", "lost", "void")]
+    settled = [
+        row for row in rows if row.get("result") in ("won", "lost", "void")
+    ]
     won = sum(row.get("result") == "won" for row in settled)
     profit = sum(
         float(row["profit"])
@@ -235,7 +237,11 @@ def prediction_metrics(rows):
 
 def normalize(name):
     text = unicodedata.normalize("NFD", name or "")
-    text = "".join(character for character in text if not unicodedata.combining(character))
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
     tokens = re.split(r"[^a-z0-9]+", text.lower())
     return [token for token in tokens if token and token not in STOP]
 
@@ -298,7 +304,9 @@ def generate_forecasts():
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
 
     if not token or not base_url:
-        return jsonify({"ok": False, "error": "missing_forecast_config"}), 500
+        return jsonify(
+            {"ok": False, "error": "missing_forecast_config"}
+        ), 500
 
     try:
         url = (
@@ -348,7 +356,9 @@ def train_new_leagues():
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
     if not base_url or not token or not secret or not service_key:
-        return jsonify({"ok": False, "error": "missing_training_config"}), 500
+        return jsonify(
+            {"ok": False, "error": "missing_training_config"}
+        ), 500
 
     try:
         backfill_url = (
@@ -365,6 +375,7 @@ def train_new_leagues():
                 "Accept": "application/json",
             },
         )
+
         with urllib.request.urlopen(req, timeout=120) as response:
             backfill_status = response.status
             backfill = json.load(response)
@@ -378,13 +389,17 @@ def train_new_leagues():
                 }
             ), 502
 
-        train_url = f"{base_url}/functions/v1/train-dixon-coles-candidates-v2"
+        train_url = (
+            f"{base_url}/functions/v1/train-dixon-coles-candidates-v2"
+        )
 
         req = urllib.request.Request(
             train_url,
             method="POST",
             headers={
                 "x-sync-secret": secret,
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
@@ -473,7 +488,9 @@ def daily_recap():
         ]
 
         protected_future = [
-            forecast for forecast in future if forecast.get("protected_forecast")
+            forecast
+            for forecast in future
+            if forecast.get("protected_forecast")
         ]
 
         today = [
@@ -651,7 +668,10 @@ def forecasts():
         latest_odds = {}
 
         for row in odds_rows:
-            latest_odds.setdefault((row["event_id"], row["market"]), row)
+            latest_odds.setdefault(
+                (row["event_id"], row["market"]),
+                row,
+            )
 
         try:
             history = supabase_request(
@@ -667,8 +687,13 @@ def forecasts():
         bets = []
 
         for forecast in rows:
-            forecast["protected_forecast"] = bool(forecast.get("recorded_at"))
-            by_version.setdefault(forecast["model_version"], []).append(forecast)
+            forecast["protected_forecast"] = bool(
+                forecast.get("recorded_at")
+            )
+            by_version.setdefault(
+                forecast["model_version"],
+                [],
+            ).append(forecast)
 
             event_id = forecast.get("external_id")
             kickoff = parse_datetime(forecast.get("kickoff_at"))
@@ -727,7 +752,9 @@ def forecasts():
                         "market": market,
                         "outcome": outcome,
                         "model_probability": probability,
-                        "raw_model_probability": forecast[f"{market}_probability"],
+                        "raw_model_probability": forecast[
+                            f"{market}_probability"
+                        ],
                         "odds": odd["odds"],
                         "expected_value": expected_value,
                         "confidence": confidence(probability),
@@ -738,11 +765,16 @@ def forecasts():
                         "provider": odd["provider"],
                         "captured_at": odd["captured_at"],
                         "odds_age_hours": round(
-                            (kickoff - parse_datetime(odd["captured_at"])).total_seconds()
+                            (
+                                kickoff
+                                - parse_datetime(odd["captured_at"])
+                            ).total_seconds()
                             / 3600,
                             2,
                         ),
-                        "protected_forecast": forecast["protected_forecast"],
+                        "protected_forecast": forecast[
+                            "protected_forecast"
+                        ],
                     }
                 )
 
@@ -804,7 +836,9 @@ def forecasts():
                 },
                 "risk_controls": {
                     "maximum_kelly_fraction": MAX_KELLY_FRACTION,
-                    "maximum_daily_exposure_fraction": MAX_DAILY_EXPOSURE_FRACTION,
+                    "maximum_daily_exposure_fraction": (
+                        MAX_DAILY_EXPOSURE_FRACTION
+                    ),
                     "maximum_odds_age_hours": MAX_ODDS_AGE_HOURS,
                 },
                 "leagues": leagues,
@@ -840,6 +874,7 @@ def list_bets():
         bets = supabase_request(
             "bet_history?select=*&order=created_at.desc&limit=200"
         )
+
         return jsonify(
             {
                 "ok": True,
@@ -947,7 +982,9 @@ def settle_bet(bet_id):
         )
 
         if not existing:
-            return jsonify({"ok": False, "error": "bet_not_found"}), 404
+            return jsonify(
+                {"ok": False, "error": "bet_not_found"}
+            ), 404
 
         bet = existing[0]
         closing_odds = payload.get("closing_odds")
@@ -1013,7 +1050,10 @@ def performance():
         by_month = defaultdict(list)
 
         for bet in bets:
-            by_profile[bet.get("profile") or "unknown"].append(bet)
+            by_profile[
+                bet.get("profile") or "unknown"
+            ].append(bet)
+
             by_strategy[
                 bet.get("strategy") or bet.get("profile") or "unknown"
             ].append(bet)
@@ -1100,7 +1140,9 @@ def sync_odds():
         ]
 
         active_events = [
-            event for event in source_events if event.get("active") is True
+            event
+            for event in source_events
+            if event.get("active") is True
         ]
 
         future_events = [
@@ -1197,7 +1239,8 @@ def sync_odds():
                     (
                         candidate
                         for candidate in events
-                        if SPORT_KEYS.get(candidate["competition"]) == sport_key
+                        if SPORT_KEYS.get(candidate["competition"])
+                        == sport_key
                         and same_match(candidate, odds_event)
                     ),
                     None,
@@ -1299,7 +1342,10 @@ def capture_closing_odds():
         latest = {}
 
         for row in odds:
-            latest.setdefault((row["event_id"], row["market"]), row)
+            latest.setdefault(
+                (row["event_id"], row["market"]),
+                row,
+            )
 
         captured = 0
 
@@ -1360,7 +1406,10 @@ def capture_closing_odds():
 @app.get("/api/collect-results")
 def collect_results():
     try:
-        service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        service_key = os.environ.get(
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "",
+        )
 
         if not service_key:
             return jsonify(
