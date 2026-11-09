@@ -302,9 +302,8 @@ def fresh_odds(odd, kickoff):
 def generate_forecasts():
     token = os.environ.get("SUPABASE_FORECAST_TOKEN", "")
     base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    if not token or not base_url or not service_key:
+    if not token or not base_url:
         return jsonify(
             {"ok": False, "error": "missing_forecast_config"}
         ), 500
@@ -319,8 +318,7 @@ def generate_forecasts():
             url,
             method="POST",
             headers={
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
@@ -438,8 +436,7 @@ def train_new_leagues():
             forecast_url,
             method="POST",
             headers={
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
