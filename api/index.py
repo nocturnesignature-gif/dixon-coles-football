@@ -427,20 +427,49 @@ def train_new_leagues():
                 }
             ), 502
 
+        try:
+            models = json.loads(
+                os.environ.get("PROSPECTIVE_MODEL_IDS_JSON", "{}")
+            )
+        except ValueError:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "invalid_model_configuration",
+                }
+            ), 503
+
+        if not isinstance(models, dict) or not models:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "explicit_model_configuration_required",
+                }
+            ), 503
+
+        persist = (
+            os.environ.get("PROSPECTIVE_WRITES_ENABLED", "").lower()
+            == "true"
+        )
+
         forecast_url = (
             f"{base_url}/functions/v1/football-model-prospective-multi-league-v1"
-            f"?token={urllib.parse.quote(token)}"
         )
 
         req = urllib.request.Request(
             forecast_url,
             method="POST",
             headers={
-                "Authorization": f"Bearer {token}",
+                "x-sync-secret": secret,
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            data=json.dumps({}).encode(),
+            data=json.dumps(
+                {
+                    "model_ids": models,
+                    "persist": persist,
+                }
+            ).encode(),
         )
 
         with urllib.request.urlopen(req, timeout=120) as response:
