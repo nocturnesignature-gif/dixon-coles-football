@@ -25,6 +25,9 @@ def generate():
     base = os.environ.get('SUPABASE_URL', '').rstrip('/')
     if not base.startswith('https://') or not secret:
         return jsonify(ok=False, error='missing_prospective_config'), 503
+    upstream_jwt = os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')
+    if len(upstream_jwt.split('.')) != 3:
+        return jsonify(ok=False, error='missing_supabase_upstream_jwt'), 503
     try:
         models = json.loads(os.environ.get('PROSPECTIVE_MODEL_IDS_JSON', '{}'))
     except ValueError:
@@ -40,7 +43,7 @@ def generate():
     if persist and os.environ.get('PROSPECTIVE_WRITES_ENABLED', '').lower() != 'true':
         return jsonify(ok=False, error='experimental_writes_not_enabled'), 403
     payload = {'model_ids': models, 'persist': persist}
-    req = urllib.request.Request(base+'/functions/v1/football-model-prospective-multi-league-v1', method='POST', headers={'x-sync-secret':secret,'Content-Type':'application/json','Accept':'application/json'}, data=json.dumps(payload).encode())
+    req = urllib.request.Request(base+'/functions/v1/football-model-prospective-multi-league-v1', method='POST', headers={'Authorization':'Bearer '+upstream_jwt,'x-sync-secret':secret,'Content-Type':'application/json','Accept':'application/json'}, data=json.dumps(payload).encode())
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
             result = json.load(response)
