@@ -1469,7 +1469,7 @@ def collect_results():
             },
             data=json.dumps(
                 {
-                    "days": 2,
+                    "days": 7,
                     "dry_run": False,
                 }
             ).encode(),
