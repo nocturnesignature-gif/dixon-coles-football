@@ -530,7 +530,7 @@ def daily_recap():
         ]
 
         protected_future = [
-            forecast
+      forecast
             for forecast in future
             if forecast.get("protected_forecast")
         ]
@@ -1465,6 +1465,7 @@ def collect_results():
             method="POST",
             headers={
                 "Authorization": f"Bearer {service_key}",
+                "x-sync-secret": os.environ.get("SYNC_SECRET", ""),
                 "Content-Type": "application/json",
             },
             data=json.dumps(
