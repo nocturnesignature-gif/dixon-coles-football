@@ -60,7 +60,7 @@ def sync_odds():
     try:
         now = datetime.now(timezone.utc)
         events = request_json("football_events_v4?select=id,external_id,source,active,competition,home_team,away_team,kickoff_at&order=kickoff_at.asc&limit=1000")
-        events = [e for e in events if e.get("source") == "football_data_org" and e.get("active") and e.get("kickoff_at") and now < datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) < now + timedelta(days=7)]
+        events = [e for e in events if e.get("source") == "football_data_org" and e.get("active") and e.get("kickoff_at") and now < datetime.fromisoformat(e["kickoff_at"].replace("Z", "+00:00")) < now + timedelta(days=14)]
         saved_live = saved_history = matched = 0
         requested = set()
         for event in events:
