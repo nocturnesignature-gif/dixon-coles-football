@@ -24,6 +24,7 @@ MODULES = {
     '/api/paper-bot': 'paper-bot',
     '/api/paper-bot/simulate': 'paper-bot',
     '/api/paper-bot-loop': 'paper-bot-loop',
+    '/api/paper-bot/activity': 'paper-bot-activity',
     '/api/data-maturity': 'data-maturity',
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
