@@ -15,24 +15,21 @@ h1{color:#7fd1ff;font-size:22px;margin:0 0 6px}
 table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
 th,td{padding:8px;border-bottom:1px solid #223047;text-align:left}
 th{color:#8fa3b8;font-weight:600}
-button{background:#1f6feb;color:white;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
 </style>
 </head>
 <body>
 <h1>Strategy Copilot — Paper Bot</h1>
 <div class="disclaimer">Estimations expérimentales — calibration prospective non validée. Aucune recommandation de pari.</div>
-<button onclick="simulate()">Lancer une simulation fictive</button>
+<div class="label">Boucle autonome quotidienne : 08:00 UTC</div>
 <div id="portfolios" class="grid" style="margin-top:20px"></div>
 <h2 style="color:#7fd1ff">Positions</h2>
 <table><thead><tr><th>Bot</th><th>Type</th><th>Mise</th><th>Cote</th><th>Statut</th><th>Placé</th></tr></thead><tbody id="positions"></tbody></table>
 <script>
-const DISCLAIMER='Estimations expérimentales — calibration prospective non validée. Aucune recommandation de pari.';
 async function load(){
  const r=await fetch('/api/paper-bot');const d=await r.json();
  document.getElementById('portfolios').innerHTML=(d.portfolios||[]).map(p=>`<div class='card'><div class='label'>${p.name}</div><div class='metric'>${Number(p.current_bankroll).toFixed(2)} €</div><div class='label'>Exposition : ${Number(p.open_exposure).toFixed(2)} €</div><div class='label'>P&L réalisé : ${Number(p.realized_pnl).toFixed(2)} €</div><div class='label'>Kelly : ${Number(p.kelly_fraction*100).toFixed(0)}%</div></div>`).join('');
  document.getElementById('positions').innerHTML=(d.positions||[]).map(p=>`<tr><td>${p.portfolio_id?.slice(0,8)}</td><td>${p.strategy_type}</td><td>${Number(p.stake_amount).toFixed(2)} €</td><td>${p.combined_odds?p.combined_odds:'—'}</td><td>${p.status}</td><td>${new Date(p.placed_at).toLocaleString('fr-FR')}</td></tr>`).join('');
 }
-async function simulate(){await fetch('/api/paper-bot/simulate',{method:'POST'});load();}
 load();
 </script>
 </body>
