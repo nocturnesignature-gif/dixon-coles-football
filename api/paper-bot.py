@@ -1,4 +1,4 @@
-import os, json, hmac, math, uuid, urllib.request, urllib.error
+import os, json, hmac, math, uuid, hashlib, urllib.request, urllib.error
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from flask import Flask, request, jsonify
@@ -9,6 +9,17 @@ def sb(method,path,payload=None):
     if not base or not key: raise RuntimeError('missing_supabase_config')
     req=urllib.request.Request(base+'/rest/v1/'+path,method=method,data=json.dumps(payload).encode() if payload is not None else None,headers={'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=20) as r: return json.load(r)
+def admin_digest():
+    secret=os.environ.get('PAPER_BOT_ADMIN_TOKEN','')
+    if secret: return hashlib.sha256(secret.encode()).hexdigest()
+    rows=sb('GET','paper_bot_admin_credentials?id=eq.1&enabled=eq.true&select=token_sha256&limit=1')
+    digest=rows[0].get('token_sha256','') if rows else ''
+    return digest if len(digest)==64 and all(c in '0123456789abcdef' for c in digest) else ''
+def admin_configured():
+    try: return bool(admin_digest())
+    except Exception:
+        app.logger.warning('Administrator configuration unavailable')
+        return False
 def dt(v):
     try:
         d=datetime.fromisoformat(str(v).replace('Z','+00:00'))
@@ -51,16 +62,21 @@ def status():
             capital=available+exposure
             cap=min(available,capital*policy['max_stake_fraction'],max(0,capital*policy['max_exposure_fraction']-exposure))
             p['risk_policy']={**policy,'maximum_next_virtual_stake':math.floor(max(0,cap)*100)/100,'execution_enabled':False,'confidence':'experimental_uncalibrated'}
-        return jsonify(ok=True,portfolios=portfolios,positions=positions,legs=enriched,execution_enabled=False,admin_edit_configured=bool(os.environ.get('PAPER_BOT_ADMIN_TOKEN')),disclaimer='Simulation virtuelle. Calibration prospective non validée. Aucune recommandation de pari.')
+        return jsonify(ok=True,portfolios=portfolios,positions=positions,legs=enriched,execution_enabled=False,admin_edit_configured=admin_configured(),disclaimer='Simulation virtuelle. Calibration prospective non validée. Aucune recommandation de pari.')
     except Exception:
         app.logger.exception('paper status failed')
         return jsonify(ok=False,error='paper_bot_status_failed'),502
 @app.post('/api/paper-bot')
 def adjust():
-    secret=os.environ.get('PAPER_BOT_ADMIN_TOKEN','')
-    if not secret: return jsonify(ok=False,error='admin_edit_not_configured'),503
     provided=request.headers.get('Authorization','')
-    if not hmac.compare_digest(provided.encode(),('Bearer '+secret).encode()): return jsonify(ok=False,error='unauthorized'),401
+    if not provided.startswith('Bearer ') or len(provided)>512: return jsonify(ok=False,error='unauthorized'),401
+    try: expected=admin_digest()
+    except Exception:
+        app.logger.warning('Administrator verification unavailable')
+        return jsonify(ok=False,error='admin_edit_not_configured'),503
+    if not expected: return jsonify(ok=False,error='admin_edit_not_configured'),503
+    supplied=hashlib.sha256(provided[7:].encode()).hexdigest()
+    if not hmac.compare_digest(supplied,expected): return jsonify(ok=False,error='unauthorized'),401
     if request.headers.get('Origin') and request.headers['Origin']!=request.host_url.rstrip('/'):
         return jsonify(ok=False,error='origin_not_allowed'),403
     if not request.is_json: return jsonify(ok=False,error='json_required'),415
