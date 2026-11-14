@@ -1,1 +1,151 @@
-INDEX_COPILOT_BUTTON_PLACEHOLDER
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi prospectif — Football européen</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+main{max-width:1080px;margin:auto;padding:16px}
+@media(min-width:768px){main{padding:24px}}
+h1{font-size:1.5rem;margin:0 0 12px}
+h2{font-size:1.15rem;margin:24px 0 8px}
+h3{font-size:1rem;margin:16px 0 8px}
+.badge{display:inline-block;background:#7c2d12;color:#fed7aa;padding:4px 10px;border-radius:999px;cursor:pointer}
+.badge.protected{background:#14532d;color:#bbf7d0}
+.badge.legacy{background:#334155;color:#cbd5e0}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+button{font:inherit}
+button.tab{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 12px;border-radius:999px;cursor:pointer}
+button.tab.active{background:#2563eb;border-color:#2563eb}
+button.follow{background:#16a34a;color:white;border:none;padding:6px 10px;border-radius:8px;cursor:pointer}
+button.action{background:#2563eb;color:white;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;margin:8px 0}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;border-radius:12px}
+table{width:100%;min-width:640px;border-collapse:collapse;background:#1e293b;border-radius:12px}
+th,td{padding:10px;border-bottom:1px solid #334155;text-align:left;white-space:nowrap}
+th{background:#334155;font-size:13px}
+td{font-size:14px}
+.error{color:#fca5a5}.positive{color:#86efac;font-weight:700}.negative{color:#fca5a5;font-weight:700}
+.high{color:#86efac;font-weight:700}.medium{color:#fde68a;font-weight:700}.low{color:#fca5a5;font-weight:700}
+.muted{color:#94a3b8;font-size:13px;line-height:1.5}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0}
+@media(min-width:768px){.kpis{grid-template-columns:repeat(4,1fr)}}
+.kpi{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:12px}
+.kpi strong{display:block;font-size:1.25rem;margin-top:4px}
+.controls{display:grid;grid-template-columns:1fr;gap:10px;background:#1e293b;padding:12px;border-radius:12px;margin:16px 0}
+@media(min-width:640px){.controls{grid-template-columns:repeat(2,1fr)}}
+.control{display:flex;flex-direction:column;gap:6px}
+label{font-size:13px;font-weight:600}
+input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;padding:10px;border-radius:8px}
+.recommendation{background:#14532d;border:1px solid #166534;padding:14px;border-radius:12px;margin:16px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Suivi prospectif — Football européen</h1>
+<p><a href="/quality.html" style="display:inline-block;padding:10px 16px;background:#2563eb;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600">Voir la qualité des prévisions</a>
+<a href="/copilot.html" style="display:inline-block;padding:10px 16px;background:#7c3aed;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;margin-left:8px">Strategy Copilot</a></p>
+<p><span class="badge">Expérimental — non validé</span></p>
+<p>Ces estimations ne constituent pas des conseils de pari et n’approuvent aucun modèle. Aucun gain n’est garanti. Les paris, combinés et alertes restent désactivés jusqu’à validation de la calibration prospective.</p>
+<div class="controls">
+  <div class="control">
+    <label for="profile">Stratégie gérée par l’API</label>
+    <select id="profile">
+      <option value="prudent">Prudent</option>
+      <option value="balanced" selected>Équilibré</option>
+      <option value="value">Valeur</option>
+    </select>
+  </div>
+  <div class="control">
+    <label for="bankroll">Cagnotte (€)</label>
+    <input id="bankroll" type="number" inputmode="decimal" min="0" step="1" placeholder="100">
+  </div>
+</div>
+<h2>Tableau de bord CLV</h2>
+<p class="muted">Compare la cote disponible au moment de la prédiction à la cote de clôture Pinnacle. Un CLV positif signifie que la cote capturée était meilleure que la clôture.</p>
+<div class="table-wrap" id="clvAnalytics">Chargement…</div>
+<h2>Mouvements de marché</h2>
+<p class="muted">Analyse les variations Pinnacle entre la prédiction et la clôture. Ces mouvements sont observés, mais ne prouvent pas automatiquement un flux d’argent intelligent.</p>
+<div class="table-wrap" id="marketMovement">Chargement…</div>
+<h2>Radar de valeur</h2>
+<p class="muted">Désactivé jusqu’à validation de la calibration prospective sur au moins 100 observations uniques par championnat.</p>
+<div class="table-wrap" id="marketValue">Chargement…</div>
+<h2>Combinés intelligents</h2>
+<p class="muted">Désactivés jusqu’à validation des sélections simples et de la calibration prospective.</p>
+<div class="table-wrap" id="combos">Chargement…</div>
+<h2>Simulateur Monte Carlo</h2>
+<p class="muted">Simulation hypothétique de bankroll. Elle ne constitue pas une recommandation de pari et n’utilise pas les prédictions non calibrées.</p>
+<div class="controls">
+  <div class="control"><label for="mcBankroll">Bankroll de départ</label><input id="mcBankroll" type="number" min="1" value="100"></div>
+  <div class="control"><label for="mcBets">Nombre de paris</label><input id="mcBets" type="number" min="1" max="10000" value="100"></div>
+  <div class="control"><label for="mcSimulations">Simulations</label><input id="mcSimulations" type="number" min="1" max="10000" value="1000"></div>
+  <div class="control"><label for="mcOdds">Cote moyenne</label><input id="mcOdds" type="number" min="1.01" step="0.01" value="2"></div>
+  <div class="control"><label for="mcProbability">Probabilité de réussite</label><input id="mcProbability" type="number" min="0.01" max="0.99" step="0.01" value="0.55"></div>
+  <div class="control"><label for="mcStakeMode">Méthode de mise</label><select id="mcStakeMode"><option value="kelly">Kelly fractionnaire</option><option value="fixed">Mise fixe</option></select></div>
+  <div class="control"><label for="mcKelly">Fraction de Kelly</label><input id="mcKelly" type="number" min="0" max="1" step="0.05" value="0.25"></div>
+  <div class="control"><label for="mcFixedStake">Mise fixe</label><input id="mcFixedStake" type="number" min="0" step="0.5" value="1"></div>
+</div>
+<button class="action" onclick="runMonteCarlo()">Lancer la simulation</button>
+<div id="monteCarlo">Aucune simulation lancée.</div>
+<h2>Matchs en direct</h2>
+<p class="muted">Les probabilités sont recalculées selon le score, la minute et les cartons rouges enregistrés.</p>
+<div class="table-wrap" id="liveMatches">Chargement…</div>
+<h2>Backtests du modèle</h2>
+<p class="muted">Le backtest évalue les prédictions passées par mois : erreur des probabilités (log loss), précision Brier et taux de bonnes prédictions.</p>
+<button class="action" onclick="runBacktest()">Lancer le backtest</button>
+<div class="table-wrap" id="backtests">Aucun backtest lancé.</div>
+<h2>Performance de l’application</h2>
+<div class="kpis" id="performanceKpis">Chargement…</div>
+<h3>Performance mensuelle</h3>
+<div class="table-wrap" id="performanceMonthly">Chargement…</div>
+<h3>Performance par stratégie</h3>
+<div class="table-wrap" id="performanceStrategy">Chargement…</div>
+<h3>Qualité des prédictions</h3>
+<div class="table-wrap" id="predictionQuality">Chargement…</div>
+<div class="recommendation" id="recommendation">Analyse des stratégies…</div>
+<h2>Laboratoire de stratégies</h2>
+<div class="table-wrap" id="strategyLab">Chargement…</div>
+<h2>À miser</h2>
+<p class="muted">Aucun pari n’est proposé tant que la calibration prospective n’est pas validée.</p>
+<h3>Paris simples</h3>
+<div class="table-wrap" id="bets">Chargement…</div>
+<h2>Journal de paris</h2>
+<div class="table-wrap" id="betJournal">Chargement…</div>
+<h2>Prédictions</h2>
+<p class="muted">Estimations expérimentales — calibration prospective non validée.</p>
+<div class="tabs" id="tabs"></div>
+<div class="table-wrap" id="forecasts">Chargement…</div>
+<h2>Résultats rapprochés</h2>
+<div class="table-wrap" id="results">Chargement…</div>
+</main>
+<script>
+const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+const odds = v => v == null ? '—' : Number(v).toFixed(2);
+const labels = {ligue_1:'Ligue 1',premier_league:'Premier League',la_liga:'LaLiga',bundesliga:'Bundesliga',serie_a:'Serie A',championship:'Championship',eredivisie:'Eredivisie',primeira_liga:'Primeira Liga'};
+let leagues = [], active = null, data = null;
+let bankroll = Number(localStorage.getItem('bankroll') || 0);
+document.getElementById('bankroll').value = bankroll || '';
+document.getElementById('profile').addEventListener('change', load);
+document.getElementById('bankroll').addEventListener('input', renderMoney);
+const euro = f => (!bankroll || !f) ? '—' : (bankroll * f).toLocaleString('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:2});
+const confidenceClass = v => v === 'Élevée' || v === 'high' ? 'high' : v === 'Moyenne' || v === 'medium' ? 'medium' : 'low';
+const perfClass = v => v == null ? '' : v >= 0 ? 'positive' : 'negative';
+function renderMoney(){bankroll=Math.max(0,Number(document.getElementById('bankroll').value)||0);localStorage.setItem('bankroll',bankroll);renderBets();}
+function render(){const l=leagues.find(x=>x.competition===active);document.getElementById('forecasts').innerHTML=l&&l.forecasts.length?`<table><tr><th>Match</th><th>Coup d’envoi</th><th>Suivi</th><th>Dom. (estimation)</th><th>Nul (estimation)</th><th>Ext. (estimation)</th><th>Qualité</th></tr>`+l.forecasts.map(f=>`<tr><td>${f.home_team} — ${f.away_team}</td><td>${new Date(f.kickoff_at).toLocaleString('fr-FR')}</td><td><span class="badge ${f.protected_forecast?'protected':'legacy'}">${f.protected_forecast?'Protégée':'Ancienne'}</span></td><td>${pct(f.calibrated_home_probability)}</td><td>${pct(f.calibrated_draw_probability)}</td><td>${pct(f.calibrated_away_probability)}</td><td class="${f.quality_flag==='ok'?'positive':'negative'}">${f.quality_flag==='ok'?'OK':'Exclue'}</td></tr>`).join('')+'</table>':'<p>Aucune prédiction.</p>';}
+function followBet(bet){alert('Les paris sont désactivés jusqu’à validation de la calibration prospective.');}
+function renderBets(){document.getElementById('bets').innerHTML='<p>Aucun pari validé : la calibration prospective n’est pas encore validée.</p>';}
+function loadClvAnalytics(){fetch('/api/clv-analytics').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const rows=x.summary||[];document.getElementById('clvAnalytics').innerHTML=rows.length?`<table><tr><th>Championnat</th><th>Observations CLV</th><th>CLV moyen</th><th>CLV positif</th></tr>`+rows.map(r=>`<tr><td>${labels[r.competition]||r.competition}</td><td>${r.observations}</td><td class="${perfClass(r.average_clv)}">${r.average_clv==null?'—':pct(r.average_clv)}</td><td>${r.positive_clv_rate==null?'—':pct(r.positive_clv_rate)}</td></tr>`).join('')+'</table>':'<p>Aucune observation CLV disponible : les cotes de clôture doivent encore être collectées.</p>';}).catch(e=>document.getElementById('clvAnalytics').innerHTML=`<p class="error">CLV indisponible : ${e.message}</p>`);}
+function loadMarketMovement(){fetch('/api/market-movement').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const rows=x.movements||[];document.getElementById('marketMovement').innerHTML=rows.length?`<table><tr><th>Championnat</th><th>Match</th><th>Marché</th><th>Cote prédiction</th><th>Cote clôture</th><th>Mouvement</th></tr>`+rows.flatMap(m=>Object.entries(m.changes).map(([market,c])=>`<tr><td>${labels[m.competition]||m.competition}</td><td>${m.home_team} — ${m.away_team}</td><td>${market}</td><td>${odds(c.before)}</td><td>${odds(c.after)}</td><td class="${c.direction==='down'?'positive':c.direction==='up'?'negative':''}">${c.direction} ${pct(c.change)}</td></tr>`)).join('')+'</table>':'<p>Aucun mouvement de marché disponible : les cotes de clôture doivent encore être collectées.</p>';}).catch(e=>document.getElementById('marketMovement').innerHTML=`<p class="error">Mouvements indisponibles : ${e.message}</p>`);}
+function loadMarketValue(){fetch('/api/market-value').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);document.getElementById('marketValue').innerHTML='<p>Aucune opportunité de valeur : calibration prospective non validée.</p>';}).catch(e=>document.getElementById('marketValue').innerHTML=`<p class="error">Radar indisponible : ${e.message}</p>`);}
+function loadCombos(){fetch('/api/combo-recommendations').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);document.getElementById('combos').innerHTML='<p>Aucun combiné valide : les sélections simples doivent d’abord être validées.</p>';}).catch(e=>document.getElementById('combos').innerHTML=`<p class="error">Combinés indisponibles : ${e.message}</p>`);}
+function runMonteCarlo(){document.getElementById('monteCarlo').innerHTML='<p>Simulation en cours…</p>';const payload={bankroll:Number(document.getElementById('mcBankroll').value),bets:Number(document.getElementById('mcBets').value),simulations:Number(document.getElementById('mcSimulations').value),odds:Number(document.getElementById('mcOdds').value),probability:Number(document.getElementById('mcProbability').value),stake_mode:document.getElementById('mcStakeMode').value,kelly_fraction:Number(document.getElementById('mcKelly').value),fixed_stake:Number(document.getElementById('mcFixedStake').value)};fetch('/api/monte-carlo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const s=x.summary;document.getElementById('monteCarlo').innerHTML=`<div class="kpis"><div class="kpi">Bankroll médiane<strong>${Number(s.median_final_bankroll).toFixed(2)} €</strong></div><div class="kpi">Pire 5 %<strong class="negative">${Number(s.worst_5_percent).toFixed(2)} €</strong></div><div class="kpi">Meilleur 5 %<strong class="positive">${Number(s.best_5_percent).toFixed(2)} €</strong></div><div class="kpi">Risque de ruine<strong class="negative">${pct(s.probability_of_ruin)}</strong></div><div class="kpi">Fraction mise<strong>${pct(s.stake_fraction)}</strong></div><div class="kpi">Kelly complet<strong>${pct(s.full_kelly_fraction)}</strong></div></div><p class="muted">Simulation hypothétique : résultats indépendants, cote et probabilité fixes.</p>`;}).catch(e=>document.getElementById('monteCarlo').innerHTML=`<p class="error">Simulation impossible : ${e.message}</p>`);}
+function loadLive(){fetch('/api/live-matches').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const rows=x.live_matches||[];document.getElementById('liveMatches').innerHTML=rows.length?`<table><tr><th>Match</th><th>Minute</th><th>Score</th><th>Cartons rouges</th><th>Dom.</th><th>Nul</th><th>Ext.</th></tr>`+rows.map(m=>`<tr><td>${m.home_team} — ${m.away_team}</td><td>${m.minute??'—'}</td><td>${m.score}</td><td>${m.red_cards}</td><td class="positive">${pct(m.live_probabilities.home)}</td><td>${pct(m.live_probabilities.draw)}</td><td>${pct(m.live_probabilities.away)}</td></tr>`).join('')+'</table>':'<p>Aucun match en direct enregistré.</p>';}).catch(e=>document.getElementById('liveMatches').innerHTML=`<p class="error">Live indisponible : ${e.message}</p>`);}
+function runBacktest(){document.getElementById('backtests').innerHTML='<p>Backtest en cours…</p>';fetch('/api/backtest').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const rows=x.backtests||[];document.getElementById('backtests').innerHTML=rows.length?`<table><tr><th>Championnat</th><th>Période test</th><th>Matchs</th><th>Log loss</th><th>Brier</th><th>Précision</th></tr>`+rows.map(b=>`<tr><td>${labels[b.competition]||b.competition}</td><td>${b.test_start} → ${b.test_end}</td><td>${b.matches}</td><td>${b.log_loss==null?'—':Number(b.log_loss).toFixed(3)}</td><td>${b.brier_score==null?'—':Number(b.brier_score).toFixed(3)}</td><td>${pct(b.accuracy)}</td></tr>`).join('')+'</table>':'<p>Aucun backtest disponible : les prédictions passées doivent encore être rapprochées des résultats.</p>';}).catch(e=>document.getElementById('backtests').innerHTML=`<p class="error">Backtest impossible : ${e.message}</p>`);}
+function loadPerformance(){fetch('/api/performance').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const o=x.overall||{};document.getElementById('performanceKpis').innerHTML=`<div class="kpi">Paris suivis<strong>${o.bets??0}</strong></div><div class="kpi">Paris réglés<strong>${o.settled??0}</strong></div><div class="kpi">Taux de réussite<strong>${pct(o.hit_rate)}</strong></div><div class="kpi">ROI<strong class="${perfClass(o.roi)}">${pct(o.roi)}</strong></div><div class="kpi">Profit<strong class="${perfClass(o.profit)}">${Number(o.profit||0).toFixed(2)}</strong></div><div class="kpi">Mise totale<strong>${Number(o.staked||0).toFixed(2)}</strong></div><div class="kpi">Écart moyen à la cote de clôture (CLV)<strong class="${perfClass(o.average_clv)}">${pct(o.average_clv)}</strong></div><div class="kpi">Paris gagnés<strong>${o.won??0}</strong></div>`;const monthly=x.by_month||{};document.getElementById('performanceMonthly').innerHTML=Object.keys(monthly).length?`<table><tr><th>Mois</th><th>Paris</th><th>Réglés</th><th>Réussite</th><th>ROI</th><th>Profit</th><th>Écart à la clôture</th></tr>`+Object.entries(monthly).map(([m,s])=>`<tr><td>${m}</td><td>${s.bets}</td><td>${s.settled}</td><td>${pct(s.hit_rate)}</td><td class="${perfClass(s.roi)}">${pct(s.roi)}</td><td class="${perfClass(s.profit)}">${pct(s.profit)}</td><td>${pct(s.average_clv)}</td></tr>`).join('')+'</table>':'<p>Aucun pari réglé pour le moment.</p>';const strategies=x.by_strategy||{};document.getElementById('performanceStrategy').innerHTML=Object.keys(strategies).length?`<table><tr><th>Stratégie</th><th>Paris</th><th>Réglés</th><th>Réussite</th><th>ROI</th><th>Profit</th><th>Écart à la clôture</th></tr>`+Object.entries(strategies).map(([s,v])=>`<tr><td>${s}</td><td>${v.bets}</td><td>${v.settled}</td><td>${pct(v.hit_rate)}</td><td class="${perfClass(v.roi)}">${pct(v.roi)}</td><td class="${perfClass(v.profit)}">${pct(v.profit)}</td><td>${pct(v.average_clv)}</td></tr>`).join('')+'</table>':'<p>Aucune donnée de performance par stratégie.</p>';const q=x.prediction_quality||{};document.getElementById('predictionQuality').innerHTML=`<table><tr><th>Matchs évalués</th><th>Erreur moyenne des probabilités (log loss)</th><th>Précision moyenne des probabilités (Brier)</th></tr><tr><td>${q.matches??0}</td><td>${q.average_log_loss==null?'—':Number(q.average_log_loss).toFixed(3)}</td><td>${q.average_brier_score==null?'—':Number(q.average_brier_score).toFixed(3)}</td></tr></table>`;}).catch(e=>{document.getElementById('performanceKpis').innerHTML=`<p class="error">Performance indisponible : ${e.message}</p>`;});}
+function loadStrategies(){fetch('/api/strategies?profile='+document.getElementById('profile').value).then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const r=x.recommendation;document.getElementById('recommendation').innerHTML=r&&r.strategy?`<strong>Stratégie recommandée : ${r.label}</strong><br>${r.reason||''}`:'<strong>Aucune recommandation pour le moment</strong><br>Aucune stratégie ne dispose actuellement de sélections suffisantes ou de cotes associées.';document.getElementById('strategyLab').innerHTML=`<table><tr><th>Stratégie</th><th>Sélections</th><th>Probabilité moy.</th><th>Valeur attendue moy.</th><th>Écart à la clôture</th><th>Risque</th></tr>`+x.ranking.map(s=>`<tr><td>${s.label}</td><td>${s.selections}</td><td>${pct(s.average_probability)}</td><td>${s.average_expected_value==null?'—':pct(s.average_expected_value)}</td><td>${s.average_clv==null?'—':pct(s.average_clv)}</td><td>${s.risk||'—'}</td></tr>`).join('')+'</table>';}).catch(e=>document.getElementById('strategyLab').innerHTML=`<p class="error">Impossible de charger les stratégies : ${e.message}</p>`);}
+function loadJournal(){fetch('/api/bets').then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);const b=x.bets||[],s=x.summary||{};document.getElementById('betJournal').innerHTML=`<p class="muted">Paris : ${s.total??0} — Réglés : ${s.settled??0} — Écart moyen à la clôture : ${s.average_clv==null?'—':pct(s.average_clv)} — Profit : ${Number(s.total_profit||0).toFixed(2)} unités</p>`+(b.length?`<table><tr><th>Date</th><th>Match</th><th>Paris</th><th>Cote</th><th>Valeur attendue</th><th>Écart à la clôture</th><th>Résultat</th><th>Profit</th></tr>`+b.map(x=>`<tr><td>${new Date(x.created_at).toLocaleDateString('fr-FR')}</td><td>${x.home_team} — ${x.away_team}</td><td>${x.outcome}</td><td>${odds(x.placed_odds)}</td><td>${pct(x.expected_value)}</td><td>${x.closing_line_value==null?'—':pct(x.closing_line_value)}</td><td>${x.result||'pending'}</td><td class="${x.profit>=0?'positive':'negative'}">${x.profit==null?'—':Number(x.profit).toFixed(2)}</td></tr>`).join('')+'</table>':'<p>Aucun pari enregistré.</p>');}).catch(e=>document.getElementById('betJournal').innerHTML=`<p class="error">Journal indisponible : ${e.message}</p>`);}
+function load(){const profile=document.getElementById('profile').value;fetch(`/api/forecasts?profile=${profile}`).then(r=>r.json()).then(x=>{if(!x.ok)throw new Error(x.error);data=x;leagues=x.leagues||[];document.getElementById('tabs').innerHTML=leagues.map(l=>`<button class="tab" data-league="${l.competition}">${labels[l.competition]||l.competition} (${l.forecasts.length})</button>`).join('');document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{active=b.dataset.league;document.querySelectorAll('.tab').forEach(y=>y.classList.toggle('active',y.dataset.league===active));render();}));active=leagues[0]?.competition;if(active)document.querySelector(`.tab[data-league="${active}"]`)?.classList.add('active');render();renderMoney();document.getElementById('results').innerHTML=x.results.length?`<table><tr><th>Match</th><th>Score</th><th>Résultat</th><th>Erreur des probabilités</th><th>Précision Brier</th></tr>`+x.results.map(r=>`<tr><td>${r.home_team} — ${r.away_team}</td><td>${r.home_score}–${r.away_score}</td><td>${r.actual_outcome}</td><td>${Number(r.log_loss).toFixed(3)}</td><td>${Number(r.brier_score).toFixed(3)}</td></tr>`).join('')+'</table>':'<p>Aucun résultat.</p>';}).catch(e=>document.getElementById('bets').innerHTML=`<p class="error">Erreur : ${e.message}</p>`);loadStrategies();loadJournal();loadPerformance();loadMarketValue();loadCombos();loadLive();loadClvAnalytics();loadMarketMovement();}
+load();
+</script>
+</body>
+</html>
