@@ -28,7 +28,7 @@ th{color:#8fa3b8;font-weight:600}
 <h2>Thought Stream</h2>
 <div id="stream"></div>
 <h2>Positions</h2>
-<table><thead><tr><th>Bot</th><th>Type</th><th>Mise</th><th>Cote</th><th>Statut</th><th>Placé</th></tr></thead><tbody id="positions"></tbody></table>
+<table><thead><tr><th>Bot</th><th>Type</th><th>Match / Sélection</th><th>Mise</th><th>Cote</th><th>Statut</th><th>Placé</th></tr></thead><tbody id="positions"></tbody></table>
 <h2>Alpha par championnat</h2>
 <table><thead><tr><th>Bot</th><th>Compétition</th><th>Positions</th><th>Réglées</th><th>Victoires</th><th>P&L</th><th>ROI</th><th>Edge moyen</th></tr></thead><tbody id="championships"></tbody></table>
 <h2>Robustesse — Monte-Carlo</h2>
@@ -41,7 +41,14 @@ async function load(){
   fetch('/api/paper-bot/analytics').then(r=>r.json())
  ]);
  document.getElementById('portfolios').innerHTML=(bot.portfolios||[]).map(p=>`<div class='card'><div class='label'>${p.name}</div><div class='metric'>${Number(p.current_bankroll).toFixed(2)} €</div><div class='label'>Exposition : ${Number(p.open_exposure).toFixed(2)} €</div><div class='label'>P&L réalisé : ${Number(p.realized_pnl).toFixed(2)} €</div><div class='label'>Kelly : ${Number(p.kelly_fraction*100).toFixed(0)}%</div></div>`).join('');
- document.getElementById('positions').innerHTML=(bot.positions||[]).map(p=>`<tr><td>${p.portfolio_id?.slice(0,8)}</td><td>${p.strategy_type}</td><td>${Number(p.stake_amount).toFixed(2)} €</td><td>${p.combined_odds?p.combined_odds:'—'}</td><td>${p.status}</td><td>${new Date(p.placed_at).toLocaleString('fr-FR')}</td></tr>`).join('');
+ const legs = bot.legs || [];
+ const legsByPosition = {};
+ legs.forEach(l=>{(legsByPosition[l.position_id] ||= []).push(l);});
+ document.getElementById('positions').innerHTML=(bot.positions||[]).map(p=>{
+  const positionLegs = legsByPosition[p.id]||[];
+  const detail = positionLegs.map(l=>`${l.home_team} vs ${l.away_team} — ${l.selection}`).join(' + ') || '—';
+  return `<tr><td>${p.portfolio_id?.slice(0,8)}</td><td>${p.strategy_type}</td><td>${detail}</td><td>${Number(p.stake_amount).toFixed(2)} €</td><td>${p.combined_odds?p.combined_odds:'—'}</td><td>${p.status}</td><td>${new Date(p.placed_at).toLocaleString('fr-FR')}</td></tr>`;
+ }).join('');
  document.getElementById('stream').innerHTML=(activity.events||[]).map(e=>`<div class='log ${e.action}'><span>${new Date(e.created_at).toLocaleTimeString('fr-FR')}</span> — ${e.message}</div>`).join('') || '<div class="log rejection">Aucun événement journalisé pour le moment.</div>';
  document.getElementById('championships').innerHTML=(analytics.championship_analytics||[]).map(a=>`<tr><td>${a.strategy_type}</td><td>${a.competition}</td><td>${a.positions}</td><td>${a.settled}</td><td>${a.wins}</td><td>${Number(a.realized_pnl).toFixed(2)} €</td><td>${a.roi===null?'—':(a.roi*100).toFixed(2)+'%'}</td><td>${a.average_edge===null?'—':(a.average_edge*100).toFixed(2)+'%'}</td></tr>`).join('') || '<tr><td colspan="8">Aucune donnée suffisante.</td></tr>';
  const mc=analytics.monte_carlo||{};
