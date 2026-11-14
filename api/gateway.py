@@ -21,6 +21,8 @@ MODULES = {
     '/api/strategies': 'strategies',
     '/api/strategy-lab': 'strategy-lab',
     '/api/strategy-screener': 'strategy-screener',
+    '/api/paper-bot': 'paper-bot',
+    '/api/paper-bot/simulate': 'paper-bot',
     '/api/data-maturity': 'data-maturity',
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
@@ -61,4 +63,6 @@ def dispatch():
     environ = request.environ.copy()
     if path == '/api/prediction-quality':
         environ['PATH_INFO'] = '/api/quality'
+    if path == '/api/paper-bot/simulate':
+        environ['PATH_INFO'] = '/api/paper-bot/simulate'
     return Response.from_app(load_app(name), environ)
