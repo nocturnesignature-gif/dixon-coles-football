@@ -1,10 +1,10 @@
 import os
 import json
-import math
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from flask import Flask, jsonify, request
 from supabase import create_client, Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -25,6 +25,8 @@ BETA_MAX_LEGS = 2
 BETA_MAX_COMBOS = 3
 MAX_DAILY_EXPOSURE = 50.0
 UNIT_STAKE = 1.0
+
+app = Flask(__name__)
 
 
 def utcnow() -> datetime:
@@ -480,6 +482,23 @@ def run() -> Dict[str, Any]:
 
     log_activity("loop_summary", "success", "Paper bot loop completed", details=summary)
     return summary
+
+
+@app.get("/api/paper-bot-loop")
+def paper_bot_loop_endpoint():
+    secret = os.environ.get("SYNC_SECRET", "")
+    provided = request.headers.get("x-sync-secret", "")
+
+    if not secret or provided != secret:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    try:
+        result = run()
+        return jsonify({"ok": True, "result": result})
+    except Exception as exc:
+        logger.exception("paper bot loop failed")
+        log_activity("loop_summary", "error", str(exc), details={"error_type": type(exc).__name__})
+        return jsonify({"ok": False, "error": "paper_bot_loop_failed", "details": str(exc)}), 500
 
 
 if __name__ == "__main__":
