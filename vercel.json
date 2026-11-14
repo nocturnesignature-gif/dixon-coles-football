@@ -9,7 +9,8 @@
     {"path": "/api/daily-recap", "schedule": "0 7 * * *"},
     {"path": "/api/collect-results", "schedule": "0 23 * * *"},
     {"path": "/api/sync-odds", "schedule": "0 9 * * *"},
-    {"path": "/api/check-alerts", "schedule": "0 12 * * *"}
+    {"path": "/api/check-alerts", "schedule": "0 12 * * *"},
+    {"path": "/api/paper-bot-loop", "schedule": "0 * * * *"}
   ],
   "routes": [
     {"src": "/api/(.*)", "dest": "/api/gateway.py"},

@@ -23,6 +23,7 @@ MODULES = {
     '/api/strategy-screener': 'strategy-screener',
     '/api/paper-bot': 'paper-bot',
     '/api/paper-bot/simulate': 'paper-bot',
+    '/api/paper-bot-loop': 'paper-bot-loop',
     '/api/data-maturity': 'data-maturity',
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
@@ -47,10 +48,7 @@ def no_store(response):
 def dispatch():
     path = request.path.rstrip('/')
     if path == '/api/check-alerts':
-        return jsonify(ok=True, status='alerts_disabled', alerts=[],
-            reason='prospective_calibration_not_validated',
-            guardrails={'bets':'disabled','accumulators':'disabled',
-                        'notifications':'disabled','recommendations':'disabled'})
+        return jsonify(ok=True, status='alerts_disabled', alerts=[], reason='prospective_calibration_not_validated', guardrails={'bets':'disabled','accumulators':'disabled','notifications':'disabled','recommendations':'disabled'})
     if path == '/api/bets' and request.method != 'GET':
         return jsonify(ok=False, error='bets_disabled_pending_validation'), 403
     if path.startswith('/api/bets/') and request.method != 'GET':
@@ -63,6 +61,4 @@ def dispatch():
     environ = request.environ.copy()
     if path == '/api/prediction-quality':
         environ['PATH_INFO'] = '/api/quality'
-    if path == '/api/paper-bot/simulate':
-        environ['PATH_INFO'] = '/api/paper-bot/simulate'
     return Response.from_app(load_app(name), environ)
