@@ -20,6 +20,7 @@ MODULES = {
     '/api/monte-carlo': 'monte-carlo',
     '/api/strategies': 'strategies',
     '/api/strategy-lab': 'strategy-lab',
+    '/api/strategy-screener': 'strategy-screener',
     '/api/data-maturity': 'data-maturity',
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
