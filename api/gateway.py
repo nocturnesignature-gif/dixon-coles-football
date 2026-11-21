@@ -30,6 +30,7 @@ MODULES = {
     '/api/sync-odds': 'sync-odds',
     '/api/capture-closing-odds': 'capture-closing-odds',
     '/api/generate-forecasts': 'generate-forecasts',
+    '/api/collect-the-odds-api-pinnacle': 'collect-the-odds-api-pinnacle',
 }
 
 @lru_cache(maxsize=None)
