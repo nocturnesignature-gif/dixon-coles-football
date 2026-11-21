@@ -70,26 +70,76 @@ class DixonColesModel:
             options={"maxiter": 500},
         )
 
+        attack = result.x[:n_teams].copy()
+        defence = result.x[n_teams : 2 * n_teams].copy()
+        home_advantage = float(result.x[-2])
+        rho = float(result.x[-1])
+
+        attack_mean = float(np.mean(attack))
+        defence_mean = float(np.mean(defence))
+
+        attack -= attack_mean
+        defence -= defence_mean
+        home_advantage += attack_mean - defence_mean
+
+        attack = dict(zip(self.teams_, attack))
+        defence = dict(zip(self.teams_, defence))
+
         self.params_ = {
-            "attack": dict(zip(self.teams_, result.x[:n_teams])),
-            "defence": dict(zip(self.teams_, result.x[n_teams : 2 * n_teams])),
-            "home_advantage": float(result.x[-2]),
-            "rho": float(result.x[-1]),
+            "attack": attack,
+            "defence": defence,
+            "home_advantage": home_advantage,
+            "rho": rho,
         }
+
         return self
+
+    def validate_expected_goals(
+        self,
+        lambda_home: float,
+        lambda_away: float,
+    ) -> None:
+        if not np.isfinite(lambda_home) or not np.isfinite(lambda_away):
+            raise ValueError("Non-finite expected goals")
+
+        if not 0.2 <= lambda_home <= 5.0:
+            raise ValueError(
+                f"Unrealistic home expected goals: {lambda_home}"
+            )
+
+        if not 0.2 <= lambda_away <= 5.0:
+            raise ValueError(
+                f"Unrealistic away expected goals: {lambda_away}"
+            )
 
     def expected_goals(self, home: str, away: str) -> tuple[float, float]:
         if self.params_ is None:
             raise RuntimeError("Model must be fitted first")
-        lambda_home = np.exp(
-            self.params_["attack"][home]
-            + self.params_["defence"][away]
-            + self.params_["home_advantage"]
+
+        if home not in self.params_["attack"]:
+            raise ValueError(f"Unknown home team: {home}")
+
+        if away not in self.params_["attack"]:
+            raise ValueError(f"Unknown away team: {away}")
+
+        lambda_home = float(
+            np.exp(
+                self.params_["attack"][home]
+                + self.params_["defence"][away]
+                + self.params_["home_advantage"]
+            )
         )
-        lambda_away = np.exp(
-            self.params_["attack"][away] + self.params_["defence"][home]
+
+        lambda_away = float(
+            np.exp(
+                self.params_["attack"][away]
+                + self.params_["defence"][home]
+            )
         )
-        return float(lambda_home), float(lambda_away)
+
+        self.validate_expected_goals(lambda_home, lambda_away)
+
+        return lambda_home, lambda_away
 
     def score_matrix(self, home: str, away: str) -> np.ndarray:
         lambda_home, lambda_away = self.expected_goals(home, away)
