@@ -151,7 +151,7 @@ def forecasts():
             "football_model_runs_v4"
             "?select=id,model_version,competition,status,created_at"
             "&competition=in.(" + ",".join(LEAGUES) + ")"
-            "&order=created_at.desc&limit=100"
+            "&order=created_at.desc&limit=1000"
         )
 
         rows = supabase_request(
