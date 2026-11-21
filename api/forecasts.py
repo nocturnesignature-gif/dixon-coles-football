@@ -1,26 +1,140 @@
-from api.index import (
-    supabase_request,
-    parse_datetime,
-    calibrate_1x2,
-    implausible,
-    PROFILES,
-    LEAGUES,
-    LEAGUE_EVENT_ALIASES,
-    RESULTS_VIEW,
-    MIN_ODDS,
-    MAX_KELLY_FRACTION,
-    MAX_EXPECTED_VALUE,
-    MIN_PLAUSIBLE_PROBABILITY,
-    MAX_PLAUSIBLE_PROBABILITY,
-    MIN_HISTORY_FOR_FITTING,
-    MAX_ODDS_AGE_HOURS,
-    kelly_fraction,
-    confidence,
-    fresh_odds,
-)
+import json
+import os
+import urllib.request
+import urllib.error
+from datetime import datetime
 from flask import Flask, jsonify, request
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.calibration import calibrate_1x2
+
 app = Flask(__name__)
+
+LEAGUES = [
+    "ligue_1",
+    "premier_league",
+    "la_liga",
+    "bundesliga",
+    "serie_a",
+    "championship",
+    "eredivisie",
+    "primeira_liga",
+]
+
+LEAGUE_EVENT_ALIASES = {
+    "ligue_1": ["Ligue 1"],
+    "premier_league": ["Premier League"],
+    "la_liga": ["Primera Division", "LaLiga"],
+    "bundesliga": ["Bundesliga"],
+    "serie_a": ["Serie A"],
+    "championship": ["Championship"],
+    "eredivisie": ["Eredivisie"],
+    "primeira_liga": ["Primeira Liga"],
+}
+
+RESULTS_VIEW = "football_prospective_verified_scores_v1"
+MIN_ODDS = 1.45
+MAX_KELLY_FRACTION = 0.01
+MAX_EXPECTED_VALUE = 0.15
+MIN_PLAUSIBLE_PROBABILITY = 0.02
+MAX_PLAUSIBLE_PROBABILITY = 0.85
+MIN_HISTORY_FOR_FITTING = 50
+MAX_ODDS_AGE_HOURS = 6
+
+PROFILES = {
+    "prudent": {
+        "label": "Prudent",
+        "minimum_single_probability": 0.65,
+        "minimum_expected_value": 0.03,
+        "maximum_odds": 2.00,
+    },
+    "balanced": {
+        "label": "Équilibré",
+        "minimum_single_probability": 0.55,
+        "minimum_expected_value": 0.05,
+        "maximum_odds": 3.80,
+    },
+    "value": {
+        "label": "Valeur",
+        "minimum_single_probability": 0.45,
+        "minimum_expected_value": 0.10,
+        "maximum_odds": 5.00,
+    },
+}
+
+
+def supabase_request(path):
+    base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    if not base_url or not service_key:
+        raise RuntimeError("missing_supabase_config")
+
+    req = urllib.request.Request(
+        f"{base_url}/rest/v1/{path}",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"supabase_http_{exc.code}:{path}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError("supabase_request_failed") from exc
+
+
+def parse_datetime(value):
+    return datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+
+
+def ratio(numerator, denominator):
+    return numerator / denominator if denominator else None
+
+
+def kelly_fraction(expected_value, odds):
+    if odds <= 1 or expected_value <= 0:
+        return 0
+    return min(MAX_KELLY_FRACTION, 0.25 * expected_value / (odds - 1))
+
+
+def confidence(probability):
+    if probability >= 0.65:
+        return "Élevée"
+    if probability >= 0.55:
+        return "Moyenne"
+    return "Faible"
+
+
+def implausible(forecast):
+    values = [
+        forecast.get("home_probability"),
+        forecast.get("draw_probability"),
+        forecast.get("away_probability"),
+    ]
+    return any(
+        value is None
+        or float(value) < MIN_PLAUSIBLE_PROBABILITY
+        or float(value) > MAX_PLAUSIBLE_PROBABILITY
+        for value in values
+    )
+
+
+def fresh_odds(odd, kickoff):
+    captured = parse_datetime(odd.get("captured_at"))
+    return (
+        captured <= kickoff
+        and (kickoff - captured).total_seconds() <= MAX_ODDS_AGE_HOURS * 3600
+    )
 
 
 @app.get("/api/forecasts")
@@ -63,7 +177,7 @@ def forecasts():
                 "?select=home_probability,draw_probability,away_probability,"
                 "actual_outcome&order=kickoff_at.desc&limit=500"
             )
-        except Exception:
+        except RuntimeError:
             history = []
 
         by_version = {}
@@ -115,12 +229,12 @@ def forecasts():
                     continue
 
                 probability = probabilities[market]
-                expected_value = probability * odd["odds"] - 1
+                expected_value = probability * float(odd["odds"]) - 1
 
                 if not (
                     expected_value >= profile["minimum_expected_value"]
                     and expected_value <= MAX_EXPECTED_VALUE
-                    and MIN_ODDS <= odd["odds"] <= profile["maximum_odds"]
+                    and MIN_ODDS <= float(odd["odds"]) <= profile["maximum_odds"]
                     and probability >= profile["minimum_single_probability"]
                 ):
                     continue
@@ -143,7 +257,7 @@ def forecasts():
                         "confidence": confidence(probability),
                         "suggested_stake_fraction": kelly_fraction(
                             expected_value,
-                            odd["odds"],
+                            float(odd["odds"]),
                         ),
                         "provider": odd["provider"],
                         "captured_at": odd["captured_at"],
@@ -207,9 +321,12 @@ def forecasts():
                 }
             )
 
-        results = supabase_request(
-            f"{RESULTS_VIEW}?select=*&order=kickoff_at.asc"
-        )
+        try:
+            results = supabase_request(
+                f"{RESULTS_VIEW}?select=*&order=kickoff_at.asc"
+            )
+        except RuntimeError:
+            results = []
 
         return jsonify(
             {
