@@ -70,6 +70,11 @@ def loop():
         return jsonify(ok=False, error='unauthorized'), 401
     if request.headers.get('Origin') and request.headers['Origin'] != request.host_url.rstrip('/'):
         return jsonify(ok=False, error='origin_not_allowed'), 403
+    created = 0
+    skipped = 0
+    rejected = 0
+    already_processed = 0
+    results = []
     try:
         now = datetime.now(timezone.utc)
         max_positions = 3
@@ -77,7 +82,7 @@ def loop():
         max_odds_age_hours = 12
         portfolios = sb('GET', 'virtual_portfolios?strategy_type=eq.singles&is_active=eq.true&order=name.asc')
         if not portfolios:
-            return jsonify(ok=True, status='no_active_portfolio', created=0, skipped=0, writes=0)
+            return jsonify(ok=True, status='no_active_portfolio', virtual_only=True, created=0, skipped=0, rejected=0, already_processed=0, writes=0, writes_scope='new_positions', results=[])
         candidates = sb('GET', 'strategy_candidates?status=eq.eligible&order=created_at.asc&limit=300&select=id,competition,home_team,away_team,market,selection,model_probability,implied_probability,edge,opening_odds,opening_captured_at,kickoff_at,event_id')
         open_positions = sb('GET', 'virtual_portfolio_positions?status=eq.open&select=id')
         position_ids = [row['id'] for row in open_positions]
@@ -85,9 +90,6 @@ def loop():
         if position_ids:
             legs = sb('GET', 'virtual_portfolio_legs?position_id=in.(' + ','.join(position_ids) + ')&select=candidate_id')
             used_candidates = {row['candidate_id'] for row in legs}
-        created = 0
-        skipped = 0
-        results = []
         for portfolio in portfolios:
             if created >= max_positions:
                 break
@@ -129,26 +131,45 @@ def loop():
                     continue
                 request_id = str(uuid.uuid4())
                 leg = {'candidate_id': candidate['id'], 'selection': candidate.get('selection') or candidate.get('market'), 'model_probability': probability, 'implied_probability_net': decimal_or_none(candidate.get('implied_probability')), 'edge': edge, 'opening_odds': odds, 'odds_taken': odds, 'market': candidate.get('market'), 'run_id': 'paper-bot-' + now.strftime('%Y%m%d%H%M%S')}
+                context = {'portfolio': portfolio['name'], 'candidate_id': candidate['id'], 'request_id': request_id, 'stake': stake}
                 try:
                     outcome = sb('POST', 'rpc/create_paper_position_atomic', {'p_request_id': request_id, 'p_portfolio_id': portfolio['id'], 'p_strategy_type': 'singles', 'p_stake_amount': stake, 'p_combined_odds': odds, 'p_combined_probability': probability, 'p_max_open_exposure': max_open_exposure, 'p_legs': [leg]})
+                    rpc_status = outcome.get('status') if isinstance(outcome, dict) else None
+                    if rpc_status == 'rejected':
+                        rejected += 1
+                        skipped += 1
+                        results.append({**context, 'status': 'rejected', 'reason': outcome.get('reason') or 'unspecified_rejection'})
+                        continue
+                    if rpc_status == 'already_processed':
+                        already_processed += 1
+                        skipped += 1
+                        used_candidates.add(candidate['id'])
+                        results.append({**context, 'status': 'already_processed', 'position_id': outcome.get('position_id')})
+                        break
+                    if rpc_status != 'created':
+                        results.append({**context, 'status': 'error', 'reason': 'unexpected_rpc_response'})
+                        raise RuntimeError('unexpected_rpc_response')
                     created += 1
                     used_candidates.add(candidate['id'])
-                    bankroll = decimal_or_none(outcome.get('remaining_bankroll')) or bankroll
-                    exposure = decimal_or_none(outcome.get('open_exposure')) or exposure
+                    results.append({**context, 'status': 'created', 'position_id': outcome.get('position_id')})
+                    next_bankroll = decimal_or_none(outcome.get('remaining_bankroll'))
+                    next_exposure = decimal_or_none(outcome.get('open_exposure'))
+                    if not outcome.get('position_id') or next_bankroll is None or next_exposure is None or not math.isfinite(next_bankroll) or not math.isfinite(next_exposure) or next_bankroll < 0 or next_exposure < 0:
+                        raise RuntimeError('invalid_created_rpc_response')
+                    bankroll = next_bankroll
+                    exposure = next_exposure
                     exposure_room = max(0.0, max_open_exposure - exposure)
-                    results.append({'portfolio': portfolio['name'], 'candidate_id': candidate['id'], 'request_id': request_id, 'status': outcome.get('status'), 'position_id': outcome.get('position_id'), 'stake': stake})
                 except urllib.error.HTTPError as error:
-                    body = error.read().decode(errors='replace')
                     skipped += 1
-                    results.append({'portfolio': portfolio['name'], 'candidate_id': candidate['id'], 'request_id': request_id, 'status': 'rejected', 'http_status': error.code, 'detail': body[:500]})
-        return jsonify(ok=True, status='executed', virtual_only=True, created=created, skipped=skipped, writes=created, results=results, disclaimer='Simulation virtuelle uniquement. Calibration prospective non validée. Aucun pari réel.')
+                    results.append({**context, 'status': 'error', 'http_status': error.code, 'reason': 'rpc_http_error_outcome_unconfirmed'})
+                    raise
+        return jsonify(ok=True, status='executed', virtual_only=True, created=created, skipped=skipped, rejected=rejected, already_processed=already_processed, writes=created, writes_scope='new_positions', results=results, disclaimer='Simulation virtuelle uniquement. Calibration prospective non validée. Aucun pari réel.')
     except urllib.error.HTTPError as error:
-        body = error.read().decode(errors='replace')
-        app.logger.error('paper bot loop HTTP %s: %s', error.code, body)
-        return jsonify(ok=False, error='paper_bot_loop_failed', detail=body[:500]), 502
+        app.logger.error('paper bot loop HTTP %s', error.code)
+        return jsonify(ok=False, error='paper_bot_loop_failed', virtual_only=True, created=created, skipped=skipped, rejected=rejected, already_processed=already_processed, writes=created, writes_scope='new_positions', results=results), 502
     except Exception:
         app.logger.exception('paper bot loop failed')
-        return jsonify(ok=False, error='paper_bot_loop_failed'), 502
+        return jsonify(ok=False, error='paper_bot_loop_failed', virtual_only=True, created=created, skipped=skipped, rejected=rejected, already_processed=already_processed, writes=created, writes_scope='new_positions', results=results), 502
 
 if __name__ == '__main__':
     print(json.dumps({'ok': True, 'status': 'ready', 'virtual_only': True}))
