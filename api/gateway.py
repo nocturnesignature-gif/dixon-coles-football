@@ -39,6 +39,9 @@ def load_app(name):
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    if name == 'paper-bot-loop':
+        from src.paper_settlement import install_settlement
+        install_settlement(module.app, module.sb, module.authorized)
     return module.app
 
 @app.after_request
