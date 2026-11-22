@@ -27,14 +27,22 @@ class DixonColesModel:
     def _negative_log_likelihood(self, params: np.ndarray, matches: list[dict]) -> float:
         attack = params[: len(self.teams_)]
         defence = params[len(self.teams_) : 2 * len(self.teams_)]
-        home_advantage, rho = params[-2], params[-1]
+        intercept = params[-3]
+        home_advantage = params[-2]
+        rho = params[-1]
         team_index = {team: i for i, team in enumerate(self.teams_)}
         total = 0.0
 
         for match in matches:
             i, j = team_index[match["home"]], team_index[match["away"]]
-            lambda_home = min(np.exp(attack[i] + defence[j] + home_advantage), 15.0)
-            lambda_away = min(np.exp(attack[j] + defence[i]), 15.0)
+            lambda_home = min(
+                np.exp(intercept + attack[i] + defence[j] + home_advantage),
+                15.0,
+            )
+            lambda_away = min(
+                np.exp(intercept + attack[j] + defence[i]),
+                15.0,
+            )
             log_p_home = poisson.logpmf(match["home_goals"], lambda_home)
             log_p_away = poisson.logpmf(match["away_goals"], lambda_away)
             tau = self._tau(match["home_goals"], match["away_goals"], lambda_home, lambda_away, rho)
@@ -59,7 +67,7 @@ class DixonColesModel:
         initial = np.concatenate([
             np.zeros(n_teams),
             np.zeros(n_teams),
-            [0.25, -0.05],
+            [np.log(1.35), 0.25, -0.05],
         ])
 
         result = minimize(
@@ -72,6 +80,7 @@ class DixonColesModel:
 
         attack = result.x[:n_teams].copy()
         defence = result.x[n_teams : 2 * n_teams].copy()
+        intercept = float(result.x[-3])
         home_advantage = float(result.x[-2])
         rho = float(result.x[-1])
 
@@ -80,12 +89,18 @@ class DixonColesModel:
 
         attack -= attack_mean
         defence -= defence_mean
-        home_advantage += attack_mean - defence_mean
+        intercept += attack_mean + defence_mean
+
+        if not np.isclose(np.sum(attack), 0.0, atol=1e-8):
+            raise ValueError("Attack strengths are not normalized")
+        if not np.isclose(np.sum(defence), 0.0, atol=1e-8):
+            raise ValueError("Defence strengths are not normalized")
 
         attack = dict(zip(self.teams_, attack))
         defence = dict(zip(self.teams_, defence))
 
         self.params_ = {
+            "intercept": intercept,
             "attack": attack,
             "defence": defence,
             "home_advantage": home_advantage,
@@ -124,7 +139,8 @@ class DixonColesModel:
 
         lambda_home = float(
             np.exp(
-                self.params_["attack"][home]
+                self.params_["intercept"]
+                + self.params_["attack"][home]
                 + self.params_["defence"][away]
                 + self.params_["home_advantage"]
             )
@@ -132,7 +148,8 @@ class DixonColesModel:
 
         lambda_away = float(
             np.exp(
-                self.params_["attack"][away]
+                self.params_["intercept"]
+                + self.params_["attack"][away]
                 + self.params_["defence"][home]
             )
         )
