@@ -111,7 +111,7 @@ def no_store(response):
 @app.get('/api/validation-health')
 def validation_health():
     try:
-        samples = read_view('football_quality_samples_deduplicated_v1', 'forecast_id.asc')
+        samples = read_view('football_quality_samples_with_closing_v1', 'forecast_id.asc')
         distinct_matches = len({row['event_id'] for row in samples})
         market_matched = [row for row in samples if row.get('market_log_loss') is not None and row.get('market_brier_score') is not None]
         closing_keys = [key for key in samples[0].keys() if key.startswith('closing_')] if samples else []
@@ -182,6 +182,7 @@ def validation_health():
             limitations=[
                 'Read-only analysis; no candidates, positions, bankroll changes or model activation are performed.',
                 'ETA is an estimate based on observed recent collection rates and is not a commitment.',
+                'Closing references use the latest complete same-provider 1X2 snapshot captured after the entry reference and before kickoff.',
                 'Calibration remains unvalidated until all pre-registered volume, quality and stability criteria are met.'
             ]
         )
