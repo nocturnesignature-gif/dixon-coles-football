@@ -57,9 +57,10 @@ def recent_unique_matches(rows, weeks, field='recorded_at'):
     return len(events)
 
 
-def eta(remaining, weekly_rate):
+def eta(remaining, four_week_rate):
     if remaining <= 0:
         return 0.0
+    weekly_rate = four_week_rate / 4
     if weekly_rate <= 0:
         return None
     return remaining / weekly_rate
@@ -72,6 +73,7 @@ def metric(rows, field):
 
 def dispersion(rows):
     keys = [
+        ('home_probability', 'draw_probability', 'away_probability'),
         ('home_win_probability', 'draw_probability', 'away_win_probability'),
         ('home_win', 'draw', 'away_win'),
     ]
