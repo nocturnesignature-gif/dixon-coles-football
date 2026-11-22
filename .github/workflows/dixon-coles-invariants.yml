@@ -1,0 +1,24 @@
+name: Dixon-Coles invariants
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install numpy scipy pytest
+
+      - name: Run Dixon-Coles invariants
+        run: python -m pytest tests/test_dixon_coles_invariants.py -v
