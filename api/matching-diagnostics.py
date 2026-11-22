@@ -53,7 +53,7 @@ def no_store(response):
 @app.get('/api/matching-diagnostics')
 def matching_diagnostics():
     try:
-        samples = read_view('football_quality_samples_deduplicated_v1', 'forecast_id.asc')
+        samples = read_view('football_quality_samples_with_closing_v1', 'forecast_id.asc')
         market_counts = Counter()
         closing_counts = Counter()
         by_competition = {}
@@ -98,7 +98,7 @@ def matching_diagnostics():
             limitations=[
                 'Read-only diagnostics; no candidates, positions, bankroll changes or model activation are performed.',
                 'Market matching uses the deduplicated quality sample and its stored market-reference fields.',
-                'Detailed provider-level ingestion diagnostics require the underlying odds snapshot tables and are not inferred here.',
+                'Closing matching uses the latest complete same-provider 1X2 snapshot captured after the entry reference and before kickoff.',
                 'Missing references are never imputed or reconstructed after the result.'
             ]
         )
