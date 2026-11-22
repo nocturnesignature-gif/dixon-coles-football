@@ -75,9 +75,10 @@ class DixonColesModel:
             initial,
             args=(matches,),
             method="L-BFGS-B",
+            bounds=[(None, None)] * (2 * n_teams)
+            + [(None, None), (None, None), (-0.2, 0.2)],
             options={"maxiter": 500},
         )
-
         attack = result.x[:n_teams].copy()
         defence = result.x[n_teams : 2 * n_teams].copy()
         intercept = float(result.x[-3])
