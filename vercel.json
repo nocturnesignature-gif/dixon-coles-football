@@ -5,12 +5,13 @@
     {"src": "*.html", "use": "@vercel/static"}
   ],
   "crons": [
+    {"path": "/api/sync-odds", "schedule": "0 5 * * *"},
     {"path": "/api/generate-forecasts", "schedule": "0 6 * * *"},
     {"path": "/api/daily-recap", "schedule": "0 7 * * *"},
-    {"path": "/api/collect-results", "schedule": "0 23 * * *"},
-    {"path": "/api/sync-odds", "schedule": "0 9 * * *"},
+    {"path": "/api/paper-bot-loop", "schedule": "0 8 * * *"},
+    {"path": "/api/sync-odds", "schedule": "0 18 * * *"},
     {"path": "/api/check-alerts", "schedule": "0 12 * * *"},
-    {"path": "/api/paper-bot-loop", "schedule": "0 8 * * *"}
+    {"path": "/api/collect-results", "schedule": "0 23 * * *"}
   ],
   "routes": [
     {"src": "/api/(.*)", "dest": "/api/gateway.py"},
