@@ -12,7 +12,7 @@
     {"path": "/api/sync-odds", "schedule": "0 18 * * *"},
     {"path": "/api/check-alerts", "schedule": "0 12 * * *"},
     {"path": "/api/collect-results", "schedule": "0 23 * * *"},
-    {"path": "/api/capture-closing-odds", "schedule": "*/15 * * * *"}
+    {"path": "/api/capture-closing-odds", "schedule": "0 19 * * *"}
   ],
   "routes": [
     {"src": "/api/(.*)", "dest": "/api/gateway.py"},
